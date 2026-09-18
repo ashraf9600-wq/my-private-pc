@@ -39,6 +39,7 @@ for argument do
   if [ "$previous" = "--model" ]; then model="$argument"; fi
   previous="$argument"
 done
+if [ "$previous" != "-" ]; then exit 99; fi
 input=$(cat)
 printf '%s\n%s\n' "$input" "$model"
 if [ -n "$OPENAI_API_KEY" ]; then printf 'api-key-present\n'; fi
@@ -126,3 +127,29 @@ printf '%s\n' 'Jawapan berjaya'
     await rm(fakeBin, { recursive: true, force: true });
   }
 });
+
+for (const scenario of ["exit", "empty", "stubborn", "abort"]) {
+  test(`Codex ${scenario} returns a safe bounded failure`, async (t) => {
+    const dir = await mkdtemp(path.join(tmpdir(), "codex-failure-"));
+    const previousPath = process.env.PATH;
+    t.after(async () => { process.env.PATH = previousPath; await rm(dir, { recursive: true, force: true }); });
+    await writeFile(path.join(dir, "codex"), `#!/usr/bin/env node
+process.stdin.resume();
+process.stdin.on('end', () => {
+  if (${JSON.stringify(scenario)} === 'exit') { process.stderr.write('secret credential'); process.exitCode = 17; }
+  else if (${JSON.stringify(scenario)} !== 'empty') { process.on('SIGTERM', () => {}); setInterval(() => {}, 100); }
+});
+`);
+    await chmod(path.join(dir, "codex"), 0o755);
+    process.env.PATH = `${dir}:${previousPath}`;
+    const controller = new AbortController();
+    const running = runCodexTask("prompt with\nUnicode: 日本", { workdir: dir, timeoutMs: 300, killGraceMs: 30, signal: controller.signal });
+    if (scenario === "abort") controller.abort();
+    await assert.rejects(running, (error) => {
+      assert.ok(!error.message.includes("secret"));
+      assert.equal(error.code, { exit: "CODEX_EXIT", empty: "CODEX_EMPTY", stubborn: "CODEX_TIMEOUT", abort: "CODEX_ABORTED" }[scenario]);
+      if (scenario === "exit") assert.equal(error.exitCode, 17);
+      return true;
+    });
+  });
+}

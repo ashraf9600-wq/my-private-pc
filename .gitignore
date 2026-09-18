@@ -7,3 +7,14 @@ secrets/
 *.auth.tmp
 node_modules/
 npm-debug.log*
+
+.env.*
+!.env.example
+**/auth.json.*
+*.pem
+*.key
+/data/*.tmp
+/data/bot-memory.json
+/data/projects.json
+/data/rph-history.json
+/data/rph-progress.json

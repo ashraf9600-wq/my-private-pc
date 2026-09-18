@@ -22,7 +22,9 @@ export function splitTelegramMessage(text, limit = TELEGRAM_MESSAGE_LIMIT) {
 }
 
 export async function runCodexTask(prompt, options) {
-  const { workdir, images = [], timeoutMs = 5 * 60 * 1000 } = options;
+  const { workdir, images = [], timeoutMs = 180_000, signal, killGraceMs = 5_000 } = options;
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("Invalid Codex timeout");
+  signal?.throwIfAborted();
   const fullPrompt = typeof prompt === "string" ? prompt : "";
   if (!fullPrompt.trim()) throw new Error("Codex prompt must not be empty.");
 
@@ -43,100 +45,81 @@ export async function runCodexTask(prompt, options) {
     'approval_policy="never"',
   ];
   for (const imagePath of images) args.push("--image", imagePath);
+  args.push("-");
 
   const env = { ...process.env };
   // Force Codex to use its existing ChatGPT login rather than API-key auth.
   delete env.OPENAI_API_KEY;
+  delete env.CODEX_API_KEY;
+
+  // Do not expose bot credentials to the model's shell environment.
+  delete env.TELEGRAM_BOT_TOKEN;
+  delete env.BOT_PASSWORD;
+  delete env.OPENAI_BASE_URL;
+  delete env.OMNIROUTE_API_KEY;
 
   return new Promise((resolve, reject) => {
-    const startedAt = Date.now();
     const child = spawn("codex", args, {
-      cwd: workdir,
-      env,
-      shell: false,
+      cwd: workdir, env, shell: false,
+      detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
-    let stderr = "";
-    let stderrLine = "";
-    let timedOut = false;
-    let outputTooLarge = false;
+    let settled = false;
+    let failure;
     let forceKillTimer;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      console.error(`[codex:${child.pid ?? "unknown"}] timed out after ${timeoutMs}ms; terminating`);
-      child.kill("SIGTERM");
+    const kill = (kind) => {
+      try {
+        if (process.platform !== "win32" && child.pid) process.kill(-child.pid, kind);
+        else child.kill(kind);
+      } catch { /* Already exited. */ }
+    };
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(forceKillTimer);
+      signal?.removeEventListener("abort", abort);
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const terminate = (code, message) => {
+      if (failure || settled) return;
+      failure = Object.assign(new Error(message), { code });
+      kill("SIGTERM");
       forceKillTimer = setTimeout(() => {
-        console.error(`[codex:${child.pid ?? "unknown"}] did not stop after SIGTERM; killing`);
-        child.kill("SIGKILL");
-      }, 5_000);
-    }, timeoutMs);
-
-    child.on("spawn", () => {
-      console.log(`[codex:${child.pid}] started (model: gpt-5.6-sol)`);
-    });
-    child.stdin.on("error", (error) => {
-      console.error(`[codex:${child.pid ?? "unknown"}] stdin error: ${error.message}`);
-    });
-    child.stdin.write(fullPrompt);
-    child.stdin.end();
+        kill("SIGKILL");
+        child.stdin.destroy();
+        child.stdout.destroy();
+        child.stderr.destroy();
+        finish(failure);
+      }, killGraceMs);
+    };
+    const abort = () => terminate("CODEX_ABORTED", "Codex task cancelled.");
+    const timer = setTimeout(() => terminate("CODEX_TIMEOUT", "Codex task timed out."), timeoutMs);
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
+    child.stdin.on("error", () => terminate("CODEX_STDIN", "Could not send Codex prompt."));
+    child.stdin.end(fullPrompt, "utf8");
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
-      if (outputTooLarge) return;
+      if (failure) return;
       if (stdout.length + chunk.length > MAX_CODEX_OUTPUT_CHARS) {
-        outputTooLarge = true;
-        child.kill("SIGTERM");
-        return;
-      }
-      stdout += chunk;
+        terminate("CODEX_OUTPUT_LIMIT", "Codex response exceeded the safe output limit.");
+      } else stdout += chunk;
     });
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk) => {
-      stderr = (stderr + chunk).slice(-8000);
-      stderrLine += chunk;
-      const lines = stderrLine.split(/\r?\n/);
-      stderrLine = lines.pop() ?? "";
-      for (const line of lines) {
-        if (line) console.error(`[codex:${child.pid ?? "unknown"}] ${line}`);
-      }
-    });
-    child.on("error", (error) => {
-      clearTimeout(timer);
-      clearTimeout(forceKillTimer);
-      console.error(`[codex] failed to start: ${error.message}`);
-      reject(error);
-    });
-    child.on("close", (code, signal) => {
-      clearTimeout(timer);
-      clearTimeout(forceKillTimer);
-      if (stderrLine) console.error(`[codex:${child.pid ?? "unknown"}] ${stderrLine}`);
-      const elapsedMs = Date.now() - startedAt;
-      console.log(
-        `[codex:${child.pid ?? "unknown"}] exited (code: ${code ?? "none"}, signal: ${signal ?? "none"}, duration: ${elapsedMs}ms)`,
-      );
-      if (timedOut) {
-        reject(new Error(`Codex task timed out after ${timeoutMs}ms.`));
-        return;
-      }
-      if (outputTooLarge) {
-        reject(new Error("Codex response exceeded the safe output limit."));
-        return;
-      }
-      if (code !== 0) {
-        const error = new Error(stderr.trim() || `Codex exited with code ${code}.`);
-        console.error(`[codex:${child.pid ?? "unknown"}] error: ${error.message}`);
-        reject(error);
-        return;
-      }
-
-      const response = stdout.trim();
-      if (!response) {
-        const error = new Error("Codex returned an empty response.");
-        console.error(`[codex:${child.pid ?? "unknown"}] error: ${error.message}`);
-        reject(error);
-        return;
-      }
-      resolve(response);
+    // Drain diagnostics without retaining/logging prompts, auth or tool output.
+    child.stderr.resume();
+    child.on("error", () => finish(Object.assign(new Error("Could not start Codex."), { code: "CODEX_SPAWN" })));
+    child.on("close", (code) => {
+      if (failure) {
+        kill("SIGKILL");
+        finish(failure);
+      } else if (code !== 0) {
+        finish(Object.assign(new Error("Codex task failed."), { code: "CODEX_EXIT", exitCode: code }));
+      } else if (!stdout.trim()) {
+        finish(Object.assign(new Error("Codex returned an empty response."), { code: "CODEX_EMPTY" }));
+      } else finish(null, stdout.trim());
     });
   });
 }

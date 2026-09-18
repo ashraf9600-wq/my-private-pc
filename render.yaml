@@ -1,0 +1,28 @@
+# Apply to the existing service; do not create a second bot with the same token.
+services:
+  - type: web
+    name: ashraf-ai-assistant
+    runtime: node
+    plan: starter
+    numInstances: 1
+    branch: main
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /healthz
+    disk:
+      name: ashraf-ai-state
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: BOT_PASSWORD
+        sync: false
+      - key: ASHRAF_AI_DATA_DIR
+        value: /var/data/memory
+      - key: CODEX_HOME
+        value: /var/data/codex
+      - key: CODEX_AUTH_FILE
+        value: /etc/secrets/auth.json

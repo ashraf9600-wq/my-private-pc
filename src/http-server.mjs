@@ -1,8 +1,8 @@
 import { createServer } from "node:http";
 
-export function createHealthServer() {
+export function createHealthServer({ getTelegramState = () => "running" } = {}) {
   return createServer((request, response) => {
-    const pathname = new URL(request.url || "/", "http://localhost").pathname;
+    const pathname = (request.url || "/").split("?")[0];
 
     if (request.method === "GET" && pathname === "/") {
       response.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
@@ -11,8 +11,9 @@ export function createHealthServer() {
     }
 
     if (request.method === "GET" && pathname === "/healthz") {
-      response.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
-      response.end("OK");
+      const telegram = getTelegramState();
+      response.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+      response.end(JSON.stringify({ status: telegram === "running" ? "ok" : "degraded", telegram, service: "ashraf-ai-assistant" }));
       return;
     }
 
@@ -25,8 +26,9 @@ export function startHttpServer({
   port = process.env.PORT || 10_000,
   host = "0.0.0.0",
   logger = console.log,
+  getTelegramState,
 } = {}) {
-  const server = createHealthServer();
+  const server = createHealthServer({ getTelegramState });
 
   return new Promise((resolve, reject) => {
     server.once("error", reject);
