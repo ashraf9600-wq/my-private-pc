@@ -116,3 +116,31 @@ test("access gate returns generic security responses", async () => {
   assert.equal(await gate({ userId: 100, text: PASSWORD }), WELCOME_MESSAGE);
   assert.equal(await gate({ userId: 100, text: "/logout" }), LOGOUT_MESSAGE);
 });
+
+test("locked commands do not consume password attempts or expose protected responses", async () => {
+  const controller = createAccessController({ password: PASSWORD, allowedUserId: 100 });
+  const gate = createAccessGate({ controller, processAuthenticated: () => assert.fail("must stay protected") });
+  for (let i = 0; i < 10; i++) {
+    for (const text of ["/ping", "/status", "/start", "/help", "/lock", "/logout", "/status@AshrafBot"]) {
+      assert.equal(await gate({ userId: 100, text }), LOCKED_MESSAGE);
+    }
+  }
+  assert.equal(await gate({ userId: 999, text: "/status" }), DENIED_MESSAGE);
+  assert.equal(await gate({ userId: 100, text: PASSWORD }), WELCOME_MESSAGE);
+});
+
+test("commands neither reset password failures nor bypass or extend an active lockout", () => {
+  let now = 0;
+  const controller = createAccessController({ password: PASSWORD, now: () => now });
+  challenge(controller);
+  for (let i = 0; i < 4; i++) {
+    assert.equal(controller.check({ userId: 100, text: "wrong" }).status, "failed");
+    assert.equal(controller.check({ userId: 100, text: "/ping" }).status, "challenge");
+  }
+  assert.equal(controller.check({ userId: 100, text: "wrong" }).status, "blocked");
+  now = 9 * 60 * 1000;
+  assert.equal(controller.check({ userId: 100, text: "/status" }).status, "blocked");
+  assert.equal(controller.check({ userId: 100, text: PASSWORD }).status, "blocked");
+  now = 10 * 60 * 1000;
+  assert.equal(controller.check({ userId: 100, text: PASSWORD }).status, "authenticated");
+});

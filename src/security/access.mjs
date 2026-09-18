@@ -9,7 +9,7 @@ export const EXPIRED_MESSAGE = "🔒 Sesi tamat. Masukkan password semula.";
 export const WELCOME_MESSAGE = "🔓 Akses dibenarkan. Selamat datang bos.";
 export const DENIED_MESSAGE = "⛔ Akses tidak dibenarkan.";
 export const FAILED_MESSAGE = "🔒 Akses belum dibenarkan. Masukkan password untuk teruskan.";
-export const BLOCKED_MESSAGE = "🔒 Terlalu banyak percubaan. Cuba lagi kemudian.";
+export const BLOCKED_MESSAGE = "🔒 Terlalu banyak percubaan password. Sekatan berlangsung 10 minit dari percubaan gagal terakhir sebelum disekat. Selepas itu, masukkan password semula.";
 export const LOGOUT_MESSAGE = "🔒 ASHRAF AI dikunci.";
 
 function digest(value) {
@@ -84,6 +84,12 @@ export function createAccessController({
       state.blockedUntil = 0;
       state.sessionExpiresAt = currentTime + sessionTimeoutMs;
       return { status: "authenticated" };
+    }
+
+    // Commands request access; they are not password guesses. Keep any existing
+    // failure count and lockout intact, and never run protected commands here.
+    if (/^\/(?:start|help|ping|status|lock|logout)(?:@\w+)?$/i.test(text.trim())) {
+      return { status: "challenge" };
     }
 
     state.failedAttempts += 1;
