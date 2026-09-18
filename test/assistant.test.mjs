@@ -75,6 +75,36 @@ test("includes prior conversation in a follow-up Codex prompt", async (t) => {
   assert.match(prompts[1], /Aktiviti RPH panjang/);
 });
 
+test("constructs non-empty prompts containing schedule questions and normal chat", async (t) => {
+  const { root } = await fixture(t);
+  const prompts = [];
+  const assistant = createAssistant({
+    dataRoot: root,
+    workdir: root,
+    runTask: async (prompt) => { prompts.push(prompt); return "ok"; },
+  });
+  await assistant("Apa jadual saya untuk seminggu", { chatId: 70 });
+  await assistant("hello", { chatId: 71 });
+  assert.ok(prompts[0].trim().length > 0);
+  assert.match(prompts[0], /PERMINTAAN BOS:\nApa jadual saya untuk seminggu/);
+  assert.match(prompts[1], /PERMINTAAN BOS:\nhello/);
+});
+
+test("includes the previous Tuesday question in the exact follow-up context", async (t) => {
+  const { root } = await fixture(t);
+  const prompts = [];
+  const assistant = createAssistant({
+    dataRoot: root,
+    workdir: root,
+    runTask: async (prompt) => { prompts.push(prompt); return "Jawapan jadual"; },
+  });
+  await assistant("Hari selasa saya ajar apa?", { chatId: 72 });
+  await assistant("Kelas mana pula?", { chatId: 72 });
+  assert.match(prompts[1], /Hari selasa saya ajar apa\?/);
+  assert.match(prompts[1], /Jawapan jadual/);
+  assert.match(prompts[1], /PERMINTAAN BOS:\nKelas mana pula\?/);
+});
+
 test("detects RPH intent, class, subject and aquatic content", () => {
   assert.equal(detectRphIntent("Buat RPH Sains 5 USM"), true);
   assert.deepEqual(extractClassSubject("Buat RPH Sains 5 USM"), {

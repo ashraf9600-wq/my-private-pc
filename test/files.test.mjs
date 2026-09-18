@@ -205,6 +205,34 @@ test("keeps actual image path for image follow-up context", async (t) => {
   assert.deepEqual((await store.context(8, "Hari Selasa?")).images, [image]);
 });
 
+test("sends both image context and Telegram caption in the constructed Codex request", async (t) => {
+  const root = await fixture(t);
+  const imagePath = path.join(root, "jadual.png");
+  await writeFile(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10]));
+  let receivedPrompt = "";
+  let receivedOptions;
+  const assistant = createAssistant({
+    dataRoot: path.join(root, "data"),
+    workdir: root,
+    attachmentStore: {
+      context: async () => ({
+        metadata: { id: "image-1", filename: "jadual.png", type: "image" },
+        relevant_content: "Imej jadual waktu",
+        images: [imagePath],
+      }),
+    },
+    runTask: async (prompt, options) => {
+      receivedPrompt = prompt;
+      receivedOptions = options;
+      return "Jadual dibaca";
+    },
+  });
+  await assistant("Baca jadual ini", { chatId: 99 });
+  assert.match(receivedPrompt, /PERMINTAAN BOS:\nBaca jadual ini/);
+  assert.match(receivedPrompt, /jadual\.png/);
+  assert.deepEqual(receivedOptions.images, [imagePath]);
+});
+
 test("explicit attachment memory requires confirmation", async (t) => {
   const root = await fixture(t);
   const upload = path.join(root, "jadual.png");

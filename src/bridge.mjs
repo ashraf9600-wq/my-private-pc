@@ -23,6 +23,8 @@ export function splitTelegramMessage(text, limit = TELEGRAM_MESSAGE_LIMIT) {
 
 export async function runCodexTask(prompt, options) {
   const { workdir, images = [], timeoutMs = 5 * 60 * 1000 } = options;
+  const fullPrompt = typeof prompt === "string" ? prompt : "";
+  if (!fullPrompt.trim()) throw new Error("Codex prompt must not be empty.");
 
   const args = [
     "exec",
@@ -41,7 +43,6 @@ export async function runCodexTask(prompt, options) {
     'approval_policy="never"',
   ];
   for (const imagePath of images) args.push("--image", imagePath);
-  args.push(prompt);
 
   const env = { ...process.env };
   // Force Codex to use its existing ChatGPT login rather than API-key auth.
@@ -52,7 +53,8 @@ export async function runCodexTask(prompt, options) {
     const child = spawn("codex", args, {
       cwd: workdir,
       env,
-      stdio: ["ignore", "pipe", "pipe"],
+      shell: false,
+      stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
@@ -73,6 +75,11 @@ export async function runCodexTask(prompt, options) {
     child.on("spawn", () => {
       console.log(`[codex:${child.pid}] started (model: gpt-5.6-sol)`);
     });
+    child.stdin.on("error", (error) => {
+      console.error(`[codex:${child.pid ?? "unknown"}] stdin error: ${error.message}`);
+    });
+    child.stdin.write(fullPrompt);
+    child.stdin.end();
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
       if (outputTooLarge) return;

@@ -23,7 +23,7 @@ test("parses dotenv values without treating comments as secrets", () => {
   );
 });
 
-test("uses the requested model and strips API-key authentication", async () => {
+test("writes the complete non-empty Telegram prompt to Codex stdin", async () => {
   const fakeBin = await mkdtemp(path.join(tmpdir(), "telegram-codex-test-"));
   const fakeCodex = path.join(fakeBin, "codex");
   const previousPath = process.env.PATH;
@@ -33,15 +33,14 @@ test("uses the requested model and strips API-key authentication", async () => {
     await writeFile(
       fakeCodex,
       `#!/bin/sh
-last=""
 model=""
 previous=""
 for argument do
   if [ "$previous" = "--model" ]; then model="$argument"; fi
   previous="$argument"
-  last="$argument"
 done
-printf '%s\n%s\n' "$last" "$model"
+input=$(cat)
+printf '%s\n%s\n' "$input" "$model"
 if [ -n "$OPENAI_API_KEY" ]; then printf 'api-key-present\n'; fi
 `,
     );
@@ -49,13 +48,13 @@ if [ -n "$OPENAI_API_KEY" ]; then printf 'api-key-present\n'; fi
     process.env.PATH = `${fakeBin}:${previousPath}`;
     process.env.OPENAI_API_KEY = "must-not-be-passed";
 
-    const result = await runCodexTask("Reply with exactly: smoke-ok", {
+    const result = await runCodexTask("Hari selasa saya ajar apa", {
       workdir: fakeBin,
       timeoutMs: 5_000,
     });
     const [receivedPrompt, receivedModel, unexpectedOutput] = result.split("\n");
 
-    assert.equal(receivedPrompt, "Reply with exactly: smoke-ok");
+    assert.equal(receivedPrompt, "Hari selasa saya ajar apa");
     assert.equal(receivedModel, "gpt-5.6-sol");
     assert.equal(unexpectedOutput, undefined);
   } finally {
@@ -82,7 +81,7 @@ for argument do
   if [ "$previous" = "--image" ]; then printf 'image=%s\n' "$argument"; fi
   previous="$argument"
 done
-printf 'prompt=%s\n' "$argument"
+printf 'prompt=%s\n' "$(cat)"
 `,
     );
     await chmod(fakeCodex, 0o755);
@@ -94,6 +93,33 @@ printf 'prompt=%s\n' "$argument"
     });
     assert.match(result, new RegExp(`image=${imagePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
     assert.match(result, /prompt=Inspect image/);
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    await rm(fakeBin, { recursive: true, force: true });
+  }
+});
+
+test("rejects an empty prompt before spawning Codex", async () => {
+  await assert.rejects(
+    runCodexTask("   ", { workdir: process.cwd(), timeoutMs: 1_000 }),
+    /must not be empty/,
+  );
+});
+
+test("does not fail solely because Codex writes a temporary-directory warning", async () => {
+  const fakeBin = await mkdtemp(path.join(tmpdir(), "telegram-codex-warning-test-"));
+  const fakeCodex = path.join(fakeBin, "codex");
+  const previousPath = process.env.PATH;
+  try {
+    await writeFile(fakeCodex, `#!/bin/sh
+cat >/dev/null
+printf '%s\n' 'Refusing to create helper binaries under temporary dir /tmp' >&2
+printf '%s\n' 'Jawapan berjaya'
+`);
+    await chmod(fakeCodex, 0o755);
+    process.env.PATH = `${fakeBin}:${previousPath}`;
+    assert.equal(await runCodexTask("hello", { workdir: fakeBin, timeoutMs: 5_000 }), "Jawapan berjaya");
   } finally {
     if (previousPath === undefined) delete process.env.PATH;
     else process.env.PATH = previousPath;

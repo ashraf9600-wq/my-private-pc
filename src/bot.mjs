@@ -122,8 +122,10 @@ async function handleMessage(message) {
       );
       await sendText(chatId, response);
     } catch (error) {
-      console.error(`Task failed (${error.code || "internal"}).`);
-      const messageText = error instanceof FileError ? error.message : `Tugas ASHRAF AI gagal: ${error.message}`;
+      console.error(`Task failed (${error.code || "internal"}): ${error.message}`);
+      const messageText = error instanceof FileError
+        ? error.message
+        : "Bos, ASHRAF AI ada masalah memproses mesej tadi. Cuba sekali lagi.";
       await sendText(chatId, messageText).catch(() => {});
     }
   });
