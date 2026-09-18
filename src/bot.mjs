@@ -8,6 +8,7 @@ import { createAccessController, createAccessGate } from "./security/access.mjs"
 import { AttachmentStore } from "./files/store.mjs";
 import { downloadTelegramAttachment, getTelegramAttachment } from "./files/telegram.mjs";
 import { FileError } from "./files/types.mjs";
+import { SerialJobQueue, TelegramPoller } from "./telegram/runtime.mjs";
 
 const projectRoot = path.resolve(path.join(path.dirname(fileURLToPath(import.meta.url)), ".."));
 await loadEnvFile(path.join(projectRoot, ".env"));
@@ -25,9 +26,10 @@ const token = process.env.TELEGRAM_BOT_TOKEN;
 const telegramUrl = `https://api.telegram.org/bot${token}`;
 const parsedUploadMb = Number(process.env.MAX_UPLOAD_MB || 10);
 const maxUploadBytes = (Number.isFinite(parsedUploadMb) && parsedUploadMb > 0 ? Math.min(parsedUploadMb, 50) : 10) * 1024 * 1024;
-let taskQueue = Promise.resolve();
-let offset = 0;
-let stopping = false;
+const parsedCodexTimeout = Number(process.env.CODEX_JOB_TIMEOUT_MS || 180_000);
+const codexTimeoutMs = Number.isFinite(parsedCodexTimeout) && parsedCodexTimeout > 0
+  ? Math.min(parsedCodexTimeout, 15 * 60 * 1000)
+  : 180_000;
 const httpServer = await startHttpServer();
 const attachmentStore = new AttachmentStore();
 await attachmentStore.initialize();
@@ -35,7 +37,17 @@ const processMessage = createAssistant({
   dataRoot,
   workdir: codexWorkdir,
   attachmentStore,
-  runTask: (prompt, options) => runCodexTask(prompt, options),
+  runTask: async (prompt, options) => {
+    console.log("[codex] job started");
+    try {
+      const response = await runCodexTask(prompt, { ...options, timeoutMs: codexTimeoutMs });
+      console.log("[codex] job completed");
+      return response;
+    } catch (error) {
+      console.error(`[codex] job failed (${error.code || "internal"})`);
+      throw error;
+    }
+  },
 });
 const accessController = createAccessController({
   password: process.env.BOT_PASSWORD,
@@ -101,15 +113,16 @@ const processSecureMessage = createAccessGate({
   },
 });
 
-function enqueue(task) {
-  taskQueue = taskQueue.catch(() => {}).then(task);
-}
+const taskQueue = new SerialJobQueue({
+  onError: (error) => console.error(`[telegram] job failed (${error.code || "internal"})`),
+});
 
 async function handleMessage(message) {
   const chatId = message.chat.id;
   const userId = message.from?.id;
   const text = message.text?.trim() || message.caption?.trim() || "";
-  enqueue(async () => {
+  console.log("[telegram] message received");
+  return taskQueue.enqueue(async () => {
     try {
       const response = await processSecureMessage(
         { userId, chatId, text, message },
@@ -121,44 +134,33 @@ async function handleMessage(message) {
         },
       );
       await sendText(chatId, response);
+      console.log("[telegram] response sent");
     } catch (error) {
       console.error(`Task failed (${error.code || "internal"}): ${error.message}`);
       const messageText = error instanceof FileError
         ? error.message
         : "Bos, ASHRAF AI ada masalah memproses mesej tadi. Cuba sekali lagi.";
       await sendText(chatId, messageText).catch(() => {});
+    } finally {
+      console.log("[telegram] ready for next message");
     }
   });
 }
 
-async function poll() {
-  while (!stopping) {
-    try {
-      const updates = await telegram("getUpdates", {
-        offset,
-        timeout: 30,
-        allowed_updates: ["message"],
-      });
-      for (const update of updates) {
-        offset = update.update_id + 1;
-        if (update.message) await handleMessage(update.message);
-      }
-    } catch (error) {
-      if (!stopping) {
-        console.error("Telegram polling failed:", error.message);
-        await new Promise((resolve) => setTimeout(resolve, 3_000));
-      }
-    }
-  }
-}
+const poller = new TelegramPoller({
+  telegram,
+  onUpdate: (update) => {
+    if (update.message) void handleMessage(update.message);
+  },
+});
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {
-    stopping = true;
+    poller.stop();
     httpServer.close();
     attachmentStore.close().catch(() => {});
   });
 }
 
 console.log(`ASHRAF AI started (workspace: ${codexWorkdir})`);
-await poll();
+await poller.start();
