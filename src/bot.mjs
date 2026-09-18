@@ -4,13 +4,14 @@ import { runCodexTask, splitTelegramMessage } from "./bridge.mjs";
 import { createAssistant } from "./assistant.mjs";
 import { startHttpServer } from "./http-server.mjs";
 import { loadEnvFile } from "./load-env.mjs";
+import { createAccessController, createAccessGate } from "./security/access.mjs";
 
 const projectRoot = path.resolve(path.join(path.dirname(fileURLToPath(import.meta.url)), ".."));
 await loadEnvFile(path.join(projectRoot, ".env"));
 const codexWorkdir = path.resolve(process.env.CODEX_WORKDIR || projectRoot);
 const dataRoot = path.resolve(process.env.ASHRAF_AI_DATA_DIR || path.join(projectRoot, "data"));
 
-const required = ["TELEGRAM_BOT_TOKEN"];
+const required = ["TELEGRAM_BOT_TOKEN", "BOT_PASSWORD"];
 const missing = required.filter((name) => !process.env[name]);
 if (missing.length) {
   console.error(`Missing required environment variable(s): ${missing.join(", ")}`);
@@ -27,6 +28,10 @@ const processMessage = createAssistant({
   dataRoot,
   workdir: codexWorkdir,
   runTask: (prompt, options) => runCodexTask(prompt, options),
+});
+const accessController = createAccessController({
+  password: process.env.BOT_PASSWORD,
+  allowedUserId: process.env.ALLOWED_TELEGRAM_USER_ID,
 });
 
 async function telegram(method, body = {}) {
@@ -49,31 +54,44 @@ async function sendText(chatId, text) {
   }
 }
 
+const processSecureMessage = createAccessGate({
+  controller: accessController,
+  processAuthenticated: async (text, { chatId }) => {
+    const typingTimer = setInterval(() => {
+      telegram("sendChatAction", { chat_id: chatId, action: "typing" }).catch(() => {});
+    }, 4_000);
+    try {
+      await telegram("sendChatAction", { chat_id: chatId, action: "typing" });
+      return await processMessage(text, { chatId });
+    } finally {
+      clearInterval(typingTimer);
+    }
+  },
+});
+
 function enqueue(task) {
   taskQueue = taskQueue.catch(() => {}).then(task);
 }
 
 async function handleMessage(message) {
   const chatId = message.chat.id;
-  const text = message.text?.trim();
-  if (!text) {
-    await sendText(chatId, "Please send a text message for Codex.");
-    return;
-  }
+  const userId = message.from?.id;
+  const text = message.text?.trim() || "";
   enqueue(async () => {
-    console.log(`Telegram task started (chat: ${chatId})`);
-    const typingTimer = setInterval(() => {
-      telegram("sendChatAction", { chat_id: chatId, action: "typing" }).catch(() => {});
-    }, 4_000);
     try {
-      await telegram("sendChatAction", { chat_id: chatId, action: "typing" });
-      const response = await processMessage(text, { chatId });
+      const response = await processSecureMessage(
+        { userId, chatId, text },
+        {
+          deletePasswordMessage: () => telegram("deleteMessage", {
+            chat_id: chatId,
+            message_id: message.message_id,
+          }),
+        },
+      );
       await sendText(chatId, response);
     } catch (error) {
       console.error("Task failed:", error);
       await sendText(chatId, `Codex task failed: ${error.message}`).catch(console.error);
-    } finally {
-      clearInterval(typingTimer);
     }
   });
 }

@@ -10,6 +10,7 @@ local JSON memory, and processes tasks one at a time for a 512 MB service.
 - Codex CLI installed and available as `codex`
 - A ChatGPT login already configured in Codex
 - A Telegram bot token from BotFather
+- A strong bot password stored in `BOT_PASSWORD`
 
 ## Configuration
 
@@ -22,6 +23,12 @@ cp .env.example .env
 `npm start` automatically loads `.env` from the repository root. Values already
 exported in the shell take precedence. The `.env` file is ignored by Git and
 must never be committed.
+
+Set `BOT_PASSWORD` in Render. Optionally set `ALLOWED_TELEGRAM_USER_ID` to the
+owner's numeric Telegram user ID; when present, every other account is rejected
+before password checking. Sessions lock after 15 minutes without activity, and
+`/lock` or `/logout` locks immediately. Password messages are deleted when the
+Telegram API permits it and are never stored in assistant memory.
 
 The bot invokes the installed Codex CLI directly and uses the ChatGPT
 authentication already stored by Codex. An OpenAI API key is neither needed nor
