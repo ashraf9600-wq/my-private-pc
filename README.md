@@ -1,8 +1,8 @@
-# Telegram Codex Bridge
+# ASHRAF AI
 
-This bot receives text messages from Telegram, runs each one as a Codex CLI task
-with `gpt-5.6-sol`, and sends the final Codex response back to Telegram. Tasks
-are processed one at a time to keep memory use predictable on a 512 MB service.
+ASHRAF AI is a persistent personal Telegram assistant for Mohamad Ashraf bin
+Jamaluddin. It runs requests through Codex CLI with `gpt-5.6-sol`, keeps compact
+local JSON memory, and processes tasks one at a time for a 512 MB service.
 
 ## Requirements
 
@@ -27,6 +27,11 @@ The bot invokes the installed Codex CLI directly and uses the ChatGPT
 authentication already stored by Codex. An OpenAI API key is neither needed nor
 passed to Codex. You can set `CODEX_WORKDIR` to choose the directory Codex works
 in; it defaults to this repository. See `.env.example` for the complete list.
+
+Assistant memory is stored in `data/`. Set `ASHRAF_AI_DATA_DIR` to a mounted
+persistent Render disk path if memory must survive redeploys. Memory contains no
+credentials. Recent conversation is bounded, and only memory relevant to the
+current request is included in a Codex prompt.
 
 ## Start
 
@@ -53,3 +58,9 @@ Codex runs with workspace-write sandboxing and can change files inside its
 configured work directory. Each Telegram message starts an ephemeral Codex
 session using `gpt-5.6-sol`, and only Codex's final response is returned to the
 chat. Only one Codex process runs at a time to limit peak memory usage.
+
+Useful messages include `ingat saya guna iPad`, `apa yang awak ingat pasal
+saya?`, `tambah projek dashboard kehadiran`, `projek saya apa`, and `buat RPH
+Sains 5 USM`. A generated RPH remains `planned` until confirmed with a message
+such as `RPH tadi dah ajar`; postponed lessons can be marked with `kelas tadi tak
+jadi`.

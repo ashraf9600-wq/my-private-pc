@@ -1,12 +1,14 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCodexTask, splitTelegramMessage } from "./bridge.mjs";
+import { createAssistant } from "./assistant.mjs";
 import { startHttpServer } from "./http-server.mjs";
 import { loadEnvFile } from "./load-env.mjs";
 
 const projectRoot = path.resolve(path.join(path.dirname(fileURLToPath(import.meta.url)), ".."));
 await loadEnvFile(path.join(projectRoot, ".env"));
 const codexWorkdir = path.resolve(process.env.CODEX_WORKDIR || projectRoot);
+const dataRoot = path.resolve(process.env.ASHRAF_AI_DATA_DIR || path.join(projectRoot, "data"));
 
 const required = ["TELEGRAM_BOT_TOKEN"];
 const missing = required.filter((name) => !process.env[name]);
@@ -21,6 +23,11 @@ let taskQueue = Promise.resolve();
 let offset = 0;
 let stopping = false;
 const httpServer = await startHttpServer();
+const processMessage = createAssistant({
+  dataRoot,
+  workdir: codexWorkdir,
+  runTask: (prompt, options) => runCodexTask(prompt, options),
+});
 
 async function telegram(method, body = {}) {
   const response = await fetch(`${telegramUrl}/${method}`, {
@@ -53,11 +60,6 @@ async function handleMessage(message) {
     await sendText(chatId, "Please send a text message for Codex.");
     return;
   }
-  if (text === "/start" || text === "/help") {
-    await sendText(chatId, "Send me a task and I’ll run it with Codex using GPT-5.6 Sol.");
-    return;
-  }
-
   enqueue(async () => {
     console.log(`Telegram task started (chat: ${chatId})`);
     const typingTimer = setInterval(() => {
@@ -65,7 +67,7 @@ async function handleMessage(message) {
     }, 4_000);
     try {
       await telegram("sendChatAction", { chat_id: chatId, action: "typing" });
-      const response = await runCodexTask(text, { workdir: codexWorkdir });
+      const response = await processMessage(text, { chatId });
       await sendText(chatId, response);
     } catch (error) {
       console.error("Task failed:", error);
@@ -104,5 +106,5 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
   });
 }
 
-console.log(`Telegram Codex bridge started (workspace: ${codexWorkdir})`);
+console.log(`ASHRAF AI started (workspace: ${codexWorkdir})`);
 await poll();

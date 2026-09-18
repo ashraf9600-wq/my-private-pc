@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "A Telegram bridge that runs messages as Codex CLI tasks.",
+  "description": "ASHRAF AI, a persistent personal Telegram assistant powered by Codex CLI.",
   "scripts": {
     "start": "node src/bot.mjs",
     "test": "node --test"

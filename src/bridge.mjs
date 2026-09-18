@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 
 export const TELEGRAM_MESSAGE_LIMIT = 4096;
+export const MAX_CODEX_OUTPUT_CHARS = 128 * 1024;
 
 export function splitTelegramMessage(text, limit = TELEGRAM_MESSAGE_LIMIT) {
   if (text.length <= limit) return [text];
@@ -56,6 +57,7 @@ export async function runCodexTask(prompt, options) {
     let stderr = "";
     let stderrLine = "";
     let timedOut = false;
+    let outputTooLarge = false;
     let forceKillTimer;
     const timer = setTimeout(() => {
       timedOut = true;
@@ -72,6 +74,12 @@ export async function runCodexTask(prompt, options) {
     });
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
+      if (outputTooLarge) return;
+      if (stdout.length + chunk.length > MAX_CODEX_OUTPUT_CHARS) {
+        outputTooLarge = true;
+        child.kill("SIGTERM");
+        return;
+      }
       stdout += chunk;
     });
     child.stderr.setEncoding("utf8");
@@ -100,6 +108,10 @@ export async function runCodexTask(prompt, options) {
       );
       if (timedOut) {
         reject(new Error(`Codex task timed out after ${timeoutMs}ms.`));
+        return;
+      }
+      if (outputTooLarge) {
+        reject(new Error("Codex response exceeded the safe output limit."));
         return;
       }
       if (code !== 0) {

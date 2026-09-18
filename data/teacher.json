@@ -1,0 +1,12 @@
+{
+  "classes": ["1 UKM", "1 USM", "2 UKM", "2 UPM", "4 UPM", "4 UTM", "5 USM", "6 UKM"],
+  "subjects": ["Sains", "Pendidikan Jasmani", "Pendidikan Kesihatan", "RBT"],
+  "professional_areas": ["RPH", "sukan sekolah", "pentadbiran", "peperiksaan", "perkhidmatan guru", "teknologi pendidikan", "automasi AI guru"],
+  "rph_fields": ["Tarikh / Hari", "Masa", "Kelas", "Mata Pelajaran", "Tajuk", "Standard Kandungan (SK + nombor)", "Standard Pembelajaran (SP + nombor)", "Objektif Pembelajaran", "Kriteria Kejayaan", "Aktiviti PdP", "BBM", "PAK21 / KBAT", "Nilai / Keselamatan", "PBD", "Refleksi berangka"],
+  "reflection_format": "____/____ mencapai objektif; ____/____ dibimbing/pengukuhan; ____/____ belum menguasai/pemulihan. Catatan: ________________________________",
+  "rph_rules": [
+    "Kekalkan kesinambungan SK, SP dan tajuk daripada kemajuan terdahulu",
+    "Jangan anggap RPH yang dirancang sudah diajar",
+    "Untuk Pendidikan Jasmani, jangan rancang renang, aktiviti akuatik, kolam renang atau simulasi renang; teruskan kandungan RPT bukan akuatik"
+  ]
+}
