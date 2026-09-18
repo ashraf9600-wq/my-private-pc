@@ -24,10 +24,10 @@ exported in the shell take precedence. The `.env` file is ignored by Git and
 must never be committed.
 
 The bridge defaults to the local OmniRoute gateway at
-`http://127.0.0.1:20128/v1`. Start OmniRoute before the bridge. If you use a
-remote OmniRoute instance, set `OMNIROUTE_BASE_URL` to its OpenAI-compatible
-endpoint. You can also set `CODEX_WORKDIR` to choose the directory Codex works
-in; it defaults to this repository.
+`http://127.0.0.1:20128/v1`. `npm start` starts that gateway, waits for its
+authenticated model catalog to become ready, and then starts the Telegram bot
+and HTTP health server. You can also set `CODEX_WORKDIR` to choose the directory
+Codex works in; it defaults to this repository.
 
 See `.env.example` for the complete list.
 
@@ -40,6 +40,12 @@ npm start
 The bot uses Telegram long polling, so it does not need a public webhook URL.
 Stop it with Ctrl+C. Nothing in this repository deploys or starts it as a
 background service.
+
+For a Render Web Service, use the default `npm install` build command and
+`npm start` start command. Configure `TELEGRAM_BOT_TOKEN` and
+`OMNIROUTE_API_KEY` as secret environment variables. Render supplies `PORT`;
+the service exposes `/` and `/healthz` on that port while OmniRoute remains on
+the internal loopback interface.
 
 ## Test
 

@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCodexTask, splitTelegramMessage } from "./bridge.mjs";
+import { startHttpServer } from "./http-server.mjs";
 import { loadEnvFile } from "./load-env.mjs";
 
 const projectRoot = path.resolve(path.join(path.dirname(fileURLToPath(import.meta.url)), ".."));
@@ -21,6 +22,7 @@ const telegramUrl = `https://api.telegram.org/bot${token}`;
 const chatQueues = new Map();
 let offset = 0;
 let stopping = false;
+const httpServer = await startHttpServer();
 
 async function telegram(method, body = {}) {
   const response = await fetch(`${telegramUrl}/${method}`, {
@@ -105,6 +107,7 @@ async function poll() {
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {
     stopping = true;
+    httpServer.close();
   });
 }
 
