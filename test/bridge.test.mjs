@@ -23,11 +23,11 @@ test("parses dotenv values without treating comments as secrets", () => {
   );
 });
 
-test("passes the prompt as an argument and preserves the OmniRoute key", async () => {
+test("uses the requested model and strips API-key authentication", async () => {
   const fakeBin = await mkdtemp(path.join(tmpdir(), "telegram-codex-test-"));
   const fakeCodex = path.join(fakeBin, "codex");
   const previousPath = process.env.PATH;
-  const previousApiKey = process.env.OMNIROUTE_API_KEY;
+  const previousOpenAiKey = process.env.OPENAI_API_KEY;
 
   try {
     await writeFile(
@@ -41,27 +41,28 @@ for argument do
   previous="$argument"
   last="$argument"
 done
-printf '%s\n%s\n%s\n' "$last" "$model" "$OMNIROUTE_API_KEY"
+printf '%s\n%s\n' "$last" "$model"
+if [ -n "$OPENAI_API_KEY" ]; then printf 'api-key-present\n'; fi
 `,
     );
     await chmod(fakeCodex, 0o755);
     process.env.PATH = `${fakeBin}:${previousPath}`;
-    process.env.OMNIROUTE_API_KEY = "inherited-key";
+    process.env.OPENAI_API_KEY = "must-not-be-passed";
 
     const result = await runCodexTask("Reply with exactly: smoke-ok", {
       workdir: fakeBin,
       timeoutMs: 5_000,
     });
-    const [receivedPrompt, receivedModel, receivedApiKey] = result.split("\n");
+    const [receivedPrompt, receivedModel, unexpectedOutput] = result.split("\n");
 
     assert.equal(receivedPrompt, "Reply with exactly: smoke-ok");
     assert.equal(receivedModel, "gpt-5.6-sol");
-    assert.equal(receivedApiKey, "inherited-key");
+    assert.equal(unexpectedOutput, undefined);
   } finally {
     if (previousPath === undefined) delete process.env.PATH;
     else process.env.PATH = previousPath;
-    if (previousApiKey === undefined) delete process.env.OMNIROUTE_API_KEY;
-    else process.env.OMNIROUTE_API_KEY = previousApiKey;
+    if (previousOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousOpenAiKey;
     await rm(fakeBin, { recursive: true, force: true });
   }
 });

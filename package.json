@@ -5,14 +5,13 @@
   "type": "module",
   "description": "A Telegram bridge that runs messages as Codex CLI tasks.",
   "scripts": {
-    "start": "node src/start.mjs",
+    "start": "node src/bot.mjs",
     "test": "node --test"
   },
   "engines": {
     "node": ">=24 <27"
   },
   "dependencies": {
-    "@openai/codex": "0.155.0",
-    "omniroute": "3.8.50"
+    "@openai/codex": "0.155.0"
   }
 }

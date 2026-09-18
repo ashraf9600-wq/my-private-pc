@@ -21,12 +21,7 @@ export function splitTelegramMessage(text, limit = TELEGRAM_MESSAGE_LIMIT) {
 }
 
 export async function runCodexTask(prompt, options) {
-  const {
-    workdir,
-    apiKey,
-    baseUrl = "http://127.0.0.1:20128/v1",
-    timeoutMs = 5 * 60 * 1000,
-  } = options;
+  const { workdir, timeoutMs = 5 * 60 * 1000 } = options;
 
   const args = [
     "exec",
@@ -42,22 +37,13 @@ export async function runCodexTask(prompt, options) {
     "--color",
     "never",
     "--config",
-    'model_provider="omniroute"',
-    "--config",
-    'model_providers.omniroute.name="OmniRoute"',
-    "--config",
-    `model_providers.omniroute.base_url=${JSON.stringify(baseUrl)}`,
-    "--config",
-    'model_providers.omniroute.env_key="OMNIROUTE_API_KEY"',
-    "--config",
-    'model_providers.omniroute.wire_api="responses"',
-    "--config",
     'approval_policy="never"',
     prompt,
   ];
 
   const env = { ...process.env };
-  if (apiKey !== undefined) env.OMNIROUTE_API_KEY = apiKey;
+  // Force Codex to use its existing ChatGPT login rather than API-key auth.
+  delete env.OPENAI_API_KEY;
 
   return new Promise((resolve, reject) => {
     const startedAt = Date.now();

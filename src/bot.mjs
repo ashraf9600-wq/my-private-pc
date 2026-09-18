@@ -8,7 +8,7 @@ const projectRoot = path.resolve(path.join(path.dirname(fileURLToPath(import.met
 await loadEnvFile(path.join(projectRoot, ".env"));
 const codexWorkdir = path.resolve(process.env.CODEX_WORKDIR || projectRoot);
 
-const required = ["TELEGRAM_BOT_TOKEN", "OMNIROUTE_API_KEY"];
+const required = ["TELEGRAM_BOT_TOKEN"];
 const missing = required.filter((name) => !process.env[name]);
 if (missing.length) {
   console.error(`Missing required environment variable(s): ${missing.join(", ")}`);
@@ -16,10 +16,8 @@ if (missing.length) {
 }
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
-const apiKey = process.env.OMNIROUTE_API_KEY;
-const baseUrl = process.env.OMNIROUTE_BASE_URL || "http://127.0.0.1:20128/v1";
 const telegramUrl = `https://api.telegram.org/bot${token}`;
-const chatQueues = new Map();
+let taskQueue = Promise.resolve();
 let offset = 0;
 let stopping = false;
 const httpServer = await startHttpServer();
@@ -44,13 +42,8 @@ async function sendText(chatId, text) {
   }
 }
 
-function enqueue(chatId, task) {
-  const previous = chatQueues.get(chatId) || Promise.resolve();
-  const next = previous.catch(() => {}).then(task);
-  chatQueues.set(chatId, next);
-  next.finally(() => {
-    if (chatQueues.get(chatId) === next) chatQueues.delete(chatId);
-  });
+function enqueue(task) {
+  taskQueue = taskQueue.catch(() => {}).then(task);
 }
 
 async function handleMessage(message) {
@@ -65,14 +58,14 @@ async function handleMessage(message) {
     return;
   }
 
-  enqueue(chatId, async () => {
+  enqueue(async () => {
     console.log(`Telegram task started (chat: ${chatId})`);
     const typingTimer = setInterval(() => {
       telegram("sendChatAction", { chat_id: chatId, action: "typing" }).catch(() => {});
     }, 4_000);
     try {
       await telegram("sendChatAction", { chat_id: chatId, action: "typing" });
-      const response = await runCodexTask(text, { workdir: codexWorkdir, apiKey, baseUrl });
+      const response = await runCodexTask(text, { workdir: codexWorkdir });
       await sendText(chatId, response);
     } catch (error) {
       console.error("Task failed:", error);
