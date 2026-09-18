@@ -5,6 +5,9 @@ import { createAssistant } from "./assistant.mjs";
 import { startHttpServer } from "./http-server.mjs";
 import { loadEnvFile } from "./load-env.mjs";
 import { createAccessController, createAccessGate } from "./security/access.mjs";
+import { AttachmentStore } from "./files/store.mjs";
+import { downloadTelegramAttachment, getTelegramAttachment } from "./files/telegram.mjs";
+import { FileError } from "./files/types.mjs";
 
 const projectRoot = path.resolve(path.join(path.dirname(fileURLToPath(import.meta.url)), ".."));
 await loadEnvFile(path.join(projectRoot, ".env"));
@@ -20,13 +23,18 @@ if (missing.length) {
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const telegramUrl = `https://api.telegram.org/bot${token}`;
+const parsedUploadMb = Number(process.env.MAX_UPLOAD_MB || 10);
+const maxUploadBytes = (Number.isFinite(parsedUploadMb) && parsedUploadMb > 0 ? Math.min(parsedUploadMb, 50) : 10) * 1024 * 1024;
 let taskQueue = Promise.resolve();
 let offset = 0;
 let stopping = false;
 const httpServer = await startHttpServer();
+const attachmentStore = new AttachmentStore();
+await attachmentStore.initialize();
 const processMessage = createAssistant({
   dataRoot,
   workdir: codexWorkdir,
+  attachmentStore,
   runTask: (prompt, options) => runCodexTask(prompt, options),
 });
 const accessController = createAccessController({
@@ -56,13 +64,37 @@ async function sendText(chatId, text) {
 
 const processSecureMessage = createAccessGate({
   controller: accessController,
-  processAuthenticated: async (text, { chatId }) => {
+  processAuthenticated: async (text, { chatId, message }) => {
     const typingTimer = setInterval(() => {
       telegram("sendChatAction", { chat_id: chatId, action: "typing" }).catch(() => {});
     }, 4_000);
     try {
       await telegram("sendChatAction", { chat_id: chatId, action: "typing" });
-      return await processMessage(text, { chatId });
+      const descriptor = getTelegramAttachment(message);
+      let request = text;
+      if (descriptor) {
+        const downloaded = await downloadTelegramAttachment(descriptor, {
+          maxBytes: maxUploadBytes,
+          getFile: (fileId) => telegram("getFile", { file_id: fileId }),
+          fetchFile: (filePath) => {
+            if (!/^[a-zA-Z0-9_./-]+$/.test(filePath) || filePath.includes("..")) {
+              throw new FileError("download_path", "Bos, laluan fail Telegram ni tidak selamat.");
+            }
+            return fetch(`https://api.telegram.org/file/bot${token}/${filePath}`, {
+              signal: AbortSignal.timeout(60_000),
+            });
+          },
+        });
+        await attachmentStore.prepare(chatId, downloaded, request);
+        if (!request) {
+          request = downloaded.kind === "image"
+            ? `Periksa imej ${downloaded.filename} dan terangkan secara ringkas maklumat berguna yang jelas kelihatan.`
+            : `Periksa kandungan ${downloaded.filename}. Beritahu secara ringkas apa yang boleh dibantu: ringkasan, carian maklumat atau semakan.`;
+        }
+      } else if (!request) {
+        return "Bos, hantar teks atau fail yang disokong.";
+      }
+      return await processMessage(request, { chatId });
     } finally {
       clearInterval(typingTimer);
     }
@@ -76,11 +108,11 @@ function enqueue(task) {
 async function handleMessage(message) {
   const chatId = message.chat.id;
   const userId = message.from?.id;
-  const text = message.text?.trim() || "";
+  const text = message.text?.trim() || message.caption?.trim() || "";
   enqueue(async () => {
     try {
       const response = await processSecureMessage(
-        { userId, chatId, text },
+        { userId, chatId, text, message },
         {
           deletePasswordMessage: () => telegram("deleteMessage", {
             chat_id: chatId,
@@ -90,8 +122,9 @@ async function handleMessage(message) {
       );
       await sendText(chatId, response);
     } catch (error) {
-      console.error("Task failed:", error);
-      await sendText(chatId, `Codex task failed: ${error.message}`).catch(console.error);
+      console.error(`Task failed (${error.code || "internal"}).`);
+      const messageText = error instanceof FileError ? error.message : `Tugas ASHRAF AI gagal: ${error.message}`;
+      await sendText(chatId, messageText).catch(() => {});
     }
   });
 }
@@ -121,6 +154,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {
     stopping = true;
     httpServer.close();
+    attachmentStore.close().catch(() => {});
   });
 }
 

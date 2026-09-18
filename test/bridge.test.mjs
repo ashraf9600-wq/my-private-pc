@@ -66,3 +66,37 @@ if [ -n "$OPENAI_API_KEY" ]; then printf 'api-key-present\n'; fi
     await rm(fakeBin, { recursive: true, force: true });
   }
 });
+
+test("passes an actual local image through the installed Codex image flag", async () => {
+  const fakeBin = await mkdtemp(path.join(tmpdir(), "telegram-codex-image-test-"));
+  const fakeCodex = path.join(fakeBin, "codex");
+  const imagePath = path.join(fakeBin, "photo.png");
+  const previousPath = process.env.PATH;
+  try {
+    await writeFile(imagePath, "image fixture");
+    await writeFile(
+      fakeCodex,
+      `#!/bin/sh
+previous=""
+for argument do
+  if [ "$previous" = "--image" ]; then printf 'image=%s\n' "$argument"; fi
+  previous="$argument"
+done
+printf 'prompt=%s\n' "$argument"
+`,
+    );
+    await chmod(fakeCodex, 0o755);
+    process.env.PATH = `${fakeBin}:${previousPath}`;
+    const result = await runCodexTask("Inspect image", {
+      workdir: fakeBin,
+      images: [imagePath],
+      timeoutMs: 5_000,
+    });
+    assert.match(result, new RegExp(`image=${imagePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+    assert.match(result, /prompt=Inspect image/);
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    await rm(fakeBin, { recursive: true, force: true });
+  }
+});

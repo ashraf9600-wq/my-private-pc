@@ -12,6 +12,8 @@
     "node": ">=24 <27"
   },
   "dependencies": {
-    "@openai/codex": "0.155.0"
+    "@openai/codex": "0.155.0",
+    "fflate": "^0.8.3",
+    "pdf-parse": "^2.4.5"
   }
 }

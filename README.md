@@ -40,6 +40,12 @@ persistent Render disk path if memory must survive redeploys. Memory contains no
 credentials. Recent conversation is bounded, and only memory relevant to the
 current request is included in a Codex prompt.
 
+Authenticated users can send JPG, JPEG, PNG, WEBP, PDF, DOCX, TXT, CSV, XLSX,
+and PPTX files. Files are validated, capped at 10 MB by default, processed as
+untrusted data, and retained only temporarily in `/tmp/ashraf-ai` for follow-up
+questions. Set `MAX_UPLOAD_MB` to change the limit (maximum 50 MB). Scanned PDFs
+are rendered as page images when readable text is unavailable.
+
 ## Start
 
 ```bash

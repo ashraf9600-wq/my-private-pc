@@ -22,7 +22,7 @@ export function splitTelegramMessage(text, limit = TELEGRAM_MESSAGE_LIMIT) {
 }
 
 export async function runCodexTask(prompt, options) {
-  const { workdir, timeoutMs = 5 * 60 * 1000 } = options;
+  const { workdir, images = [], timeoutMs = 5 * 60 * 1000 } = options;
 
   const args = [
     "exec",
@@ -39,8 +39,9 @@ export async function runCodexTask(prompt, options) {
     "never",
     "--config",
     'approval_policy="never"',
-    prompt,
   ];
+  for (const imagePath of images) args.push("--image", imagePath);
+  args.push(prompt);
 
   const env = { ...process.env };
   // Force Codex to use its existing ChatGPT login rather than API-key auth.
