@@ -11,6 +11,7 @@ import { AttachmentStore } from "./files/store.mjs";
 import { downloadTelegramAttachment, getTelegramAttachment } from "./files/telegram.mjs";
 import { FileError } from "./files/types.mjs";
 import { SerialJobQueue, TelegramPoller } from "./telegram/runtime.mjs";
+import { createRuntimeStatus, dispatchMessageJob } from "./telegram/status.mjs";
 
 async function main() {
   const projectRoot = path.resolve(path.join(path.dirname(fileURLToPath(import.meta.url)), ".."));
@@ -38,6 +39,7 @@ async function main() {
   await initializeStorage({ projectRoot, dataRoot, codexHome: process.env.CODEX_HOME, authFile: process.env.CODEX_AUTH_FILE });
   const attachmentStore = new AttachmentStore();
   await attachmentStore.initialize();
+  const runtimeStatus = createRuntimeStatus();
   const processMessage = createAssistant({
     dataRoot,
     workdir: codexWorkdir,
@@ -45,7 +47,9 @@ async function main() {
     runTask: async (prompt, options) => {
       console.log("[codex] job started");
       try {
-        const response = await runCodexTask(prompt, { ...options, timeoutMs: codexTimeoutMs, signal: controller.signal });
+        const response = await runtimeStatus.runJob(() =>
+          runCodexTask(prompt, { ...options, timeoutMs: codexTimeoutMs, signal: controller.signal }),
+        );
         console.log("[codex] job completed");
         return response;
       } catch (error) {
@@ -87,6 +91,8 @@ async function main() {
   const processSecureMessage = createAccessGate({
     controller: accessController,
     processAuthenticated: async (text, { chatId, message }) => {
+      const healthReply = runtimeStatus.reply(text);
+      if (healthReply !== null) return healthReply;
       const typingTimer = setInterval(() => {
         telegram("sendChatAction", { chat_id: chatId, action: "typing" }).catch(() => {});
       }, 4_000);
@@ -132,7 +138,8 @@ async function main() {
     const userId = message.from?.id;
     const text = message.text?.trim() || message.caption?.trim() || "";
     console.log("[telegram] message received");
-    return taskQueue.enqueue(async () => {
+    if (controller.signal.aborted) return;
+    return dispatchMessageJob(text, async () => {
       try {
         const response = await processSecureMessage(
           { userId, chatId, text, message },
@@ -156,7 +163,7 @@ async function main() {
       } finally {
         console.log("[telegram] ready for next message");
       }
-    });
+    }, taskQueue);
   }
 
   const poller = new TelegramPoller({
