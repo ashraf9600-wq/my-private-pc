@@ -153,3 +153,27 @@ process.stdin.on('end', () => {
     });
   });
 }
+
+test("public group Codex uses an empty temporary directory and disables private access tools", async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), "public-codex-test-"));
+  const previousPath = process.env.PATH;
+  t.after(async () => { process.env.PATH = previousPath; await rm(dir, { recursive: true, force: true }); });
+  await writeFile(path.join(dir, "codex"), `#!/usr/bin/env node
+const fs = require('node:fs');
+process.stdin.resume();
+process.stdin.on('end', () => process.stdout.write(JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), files: fs.readdirSync('.') })));
+`);
+  await chmod(path.join(dir, "codex"), 0o755);
+  process.env.PATH = `${dir}:${previousPath}`;
+  const result = JSON.parse(await runCodexTask("public question", { publicGroup: true, workdir: dir, images: ["private.png"] }));
+  assert.notEqual(result.cwd, dir);
+  assert.deepEqual(result.files, []);
+  assert.equal(result.args[result.args.indexOf("--sandbox") + 1], "read-only");
+  for (const feature of ["shell_tool", "apps", "plugins", "multi_agent", "memories", "view_image", "browser_use", "computer_use"]) {
+    assert.equal(result.args[result.args.indexOf(feature) - 1], "--disable");
+  }
+  assert.ok(result.args.includes("project_doc_max_bytes=0"));
+  assert.ok(!result.args.includes("--image"));
+  const { access } = await import("node:fs/promises");
+  await assert.rejects(access(result.cwd), { code: "ENOENT" });
+});

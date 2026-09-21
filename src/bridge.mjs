@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { spawn } from "node:child_process";
 
 export const TELEGRAM_MESSAGE_LIMIT = 4096;
@@ -22,6 +25,16 @@ export function splitTelegramMessage(text, limit = TELEGRAM_MESSAGE_LIMIT) {
 }
 
 export async function runCodexTask(prompt, options) {
+  if (!options.publicGroup) return executeCodexTask(prompt, options);
+  const workdir = await mkdtemp(path.join(tmpdir(), "ashraf-public-"));
+  try {
+    return await executeCodexTask(prompt, { ...options, workdir, images: [] });
+  } finally {
+    await rm(workdir, { recursive: true, force: true });
+  }
+}
+
+async function executeCodexTask(prompt, options) {
   const { workdir, images = [], timeoutMs = 180_000, signal, killGraceMs = 5_000 } = options;
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("Invalid Codex timeout");
   signal?.throwIfAborted();
@@ -36,7 +49,7 @@ export async function runCodexTask(prompt, options) {
     "--model",
     "gpt-5.6-sol",
     "--sandbox",
-    "workspace-write",
+    options.publicGroup ? "read-only" : "workspace-write",
     "--cd",
     workdir,
     "--color",
@@ -44,6 +57,12 @@ export async function runCodexTask(prompt, options) {
     "--config",
     'approval_policy="never"',
   ];
+  if (options.publicGroup) {
+    for (const feature of ["shell_tool", "unified_exec", "apps", "plugins", "multi_agent", "multi_agent_v2", "memories", "browser_use", "computer_use", "view_image", "image_generation", "code_mode", "code_mode_host", "hooks", "skill_search"]) {
+      args.push("--disable", feature);
+    }
+    for (const setting of ['web_search="disabled"', 'project_doc_max_bytes=0', 'mcp_servers={}', 'tools.view_image=false', 'features.skip_host_skill_discovery=true']) args.push("--config", setting);
+  }
   for (const imagePath of images) args.push("--image", imagePath);
   args.push("-");
 

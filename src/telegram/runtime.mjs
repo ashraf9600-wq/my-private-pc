@@ -53,7 +53,7 @@ export class TelegramPoller {
   async fetchUpdates() {
     if (this.stopped) return;
     const updates = await this.telegram("getUpdates", {
-      offset: this.offset, timeout: 30, allowed_updates: ["message"],
+      offset: this.offset, timeout: 30, allowed_updates: ["message", "edited_message", "my_chat_member"],
     }, { signal: this.controller.signal });
     if (this.stopped) return;
     if (!Array.isArray(updates)) throw new Error("Malformed Telegram updates");

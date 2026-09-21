@@ -1,3 +1,5 @@
+import { GROUP_REGISTRY_RULES, isGroupsCommand } from "./telegram/group-registry.mjs";
+import { DENIED_MESSAGE } from "./security/access.mjs";
 import path from "node:path";
 import { appendConversation } from "./memory/conversation.mjs";
 import { detectProjectCommand, addProject, listProjects, updateProject } from "./memory/projects.mjs";
@@ -60,11 +62,18 @@ function parseTimetableMarker(response) {
   }
 }
 
-export function createAssistant({ dataRoot, runTask, workdir, attachmentStore, now = () => new Date() }) {
+export function createAssistant({ dataRoot, runTask, workdir, attachmentStore, groupRegistry, allowedUserId, now = () => new Date() }) {
   const store = new JsonStore(path.resolve(dataRoot));
 
-  return async function processMessage(text, { chatId }) {
+  return async function processMessage(text, { chatId, userId, chatType }) {
     const request = text.trim();
+    const registryOwner = allowedUserId && String(userId) === String(allowedUserId) && chatType === "private";
+    // Fail closed when registry is enabled: a password alone does not grant
+    // access to the owner's registry (including through Codex filesystem tools).
+    if (groupRegistry && !registryOwner) return DENIED_MESSAGE;
+    if (isGroupsCommand(request)) {
+      return registryOwner && groupRegistry ? groupRegistry.formatActiveGroups() : DENIED_MESSAGE;
+    }
     if (request === "/start" || request === "/help") return HELP_TEXT;
 
     if (/^(?:ya[, ]*)?(?:sahkan|confirm)(?:\s+simpan)?$/i.test(request) && attachmentStore) {
@@ -138,6 +147,10 @@ export function createAssistant({ dataRoot, runTask, workdir, attachmentStore, n
     }
 
     const context = await retrieveRelevantMemory(store, request, { chatId, now: now() });
+    if (groupRegistry && registryOwner) {
+      const recentQuestions = context.recent_conversation.filter((turn) => turn.role === "user").slice(-2).map((turn) => turn.text).join(" ");
+      context.telegram_groups = await groupRegistry.context(`${recentQuestions} ${request}`);
+    }
     const attachment = activeAttachment;
     if (attachment) {
       context.attachment = {
@@ -148,6 +161,7 @@ export function createAssistant({ dataRoot, runTask, workdir, attachmentStore, n
     }
     await appendConversation(store, chatId, "user", request, now());
     let prompt = buildPrompt(request, context);
+    if (context.telegram_groups) prompt += `\n\nARAHAN REGISTRY TELEGRAM:\n${GROUP_REGISTRY_RULES}`;
     const wantsMemory = Boolean(attachment && /\b(?:ingat|simpan)\b/i.test(request));
     if (wantsMemory) prompt += "\n\nJika lampiran ini ialah jadual waktu, berikan tafsiran berstruktur dan akhiri dengan <ashraf_timetable_json>{\"entries\":[{\"day\":\"Selasa\",\"time\":\"08:00\",\"class\":\"...\",\"subject\":\"...\"}]}</ashraf_timetable_json>. Jangan reka sel yang tidak jelas.";
     const rawResponse = await runTask(prompt, { workdir, images: attachment?.images || [] });

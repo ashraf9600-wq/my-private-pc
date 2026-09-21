@@ -88,7 +88,7 @@ export function createAccessController({
 
     // Commands request access; they are not password guesses. Keep any existing
     // failure count and lockout intact, and never run protected commands here.
-    if (/^\/(?:start|help|ping|status|lock|logout)(?:@\w+)?$/i.test(text.trim())) {
+    if (/^\/(?:start|help|ping|status|groups|lock|logout)(?:@\w+)?$/i.test(text.trim())) {
       return { status: "challenge" };
     }
 

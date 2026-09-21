@@ -1,4 +1,6 @@
 import path from "node:path";
+import { GroupRegistry, createRegistryUpdateHandler } from "./telegram/group-registry.mjs";
+import { createGroupHandler, isGroup } from "./telegram/groups.mjs";
 import { acquirePollingLock, installLifecycle } from "./lifecycle.mjs";
 import { initializeStorage } from "./storage.mjs";
 import { fileURLToPath } from "node:url";
@@ -40,7 +42,10 @@ async function main() {
   const attachmentStore = new AttachmentStore();
   await attachmentStore.initialize();
   const runtimeStatus = createRuntimeStatus();
+  const groupRegistry = new GroupRegistry({ dataRoot });
   const processMessage = createAssistant({
+    groupRegistry,
+    allowedUserId: process.env.ALLOWED_TELEGRAM_USER_ID,
     dataRoot,
     workdir: codexWorkdir,
     attachmentStore,
@@ -59,6 +64,15 @@ async function main() {
         throw error;
       }
     },
+  });
+  const processGroupMessage = createGroupHandler({
+    dataRoot,
+    registry: groupRegistry,
+    ownerId: process.env.ALLOWED_TELEGRAM_USER_ID,
+    botId: token.split(":")[0],
+    botUsername: process.env.TELEGRAM_BOT_USERNAME || "Ashraf8765_bot",
+    runTask: (prompt, options) => runtimeStatus.runJob(() =>
+      runCodexTask(prompt, { ...options, timeoutMs: codexTimeoutMs, signal: controller.signal })),
   });
   const accessController = createAccessController({
     password: process.env.BOT_PASSWORD,
@@ -90,7 +104,7 @@ async function main() {
 
   const processSecureMessage = createAccessGate({
     controller: accessController,
-    processAuthenticated: async (text, { chatId, message }) => {
+    processAuthenticated: async (text, { chatId, userId, message }) => {
       const healthReply = runtimeStatus.reply(text);
       if (healthReply !== null) return healthReply;
       const typingTimer = setInterval(() => {
@@ -122,7 +136,7 @@ async function main() {
         } else if (!request) {
           return "Bos, hantar teks atau fail yang disokong.";
         }
-        return await processMessage(request, { chatId });
+        return await processMessage(request, { chatId, userId, chatType: message.chat.type });
       } finally {
         clearInterval(typingTimer);
       }
@@ -139,6 +153,18 @@ async function main() {
     const text = message.text?.trim() || message.caption?.trim() || "";
     console.log("[telegram] message received");
     if (controller.signal.aborted) return;
+    if (isGroup(message)) {
+      taskQueue.enqueue(async () => {
+        try {
+          const response = await processGroupMessage(message);
+          if (response !== null) await sendText(chatId, response);
+        } catch {
+          console.error("[telegram] group task failed");
+        }
+      });
+      return;
+    }
+    if (message.chat.type !== "private") return;
     return dispatchMessageJob(text, async () => {
       try {
         const response = await processSecureMessage(
@@ -168,9 +194,7 @@ async function main() {
 
   const poller = new TelegramPoller({
     telegram,
-    onUpdate: (update) => {
-      if (update.message) void handleMessage(update.message);
-    },
+    onUpdate: createRegistryUpdateHandler({ registry: groupRegistry, onMessage: handleMessage }),
   });
 
   const httpServer = await startHttpServer({ getTelegramState: () => poller.state });
@@ -182,6 +206,7 @@ async function main() {
           httpServer.close(resolve);
           httpServer.closeAllConnections();
         }),
+        groupRegistry.pending,
         attachmentStore.close(),
         releaseLock(),
       ]);

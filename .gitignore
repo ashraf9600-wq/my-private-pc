@@ -18,3 +18,6 @@ npm-debug.log*
 /data/projects.json
 /data/rph-history.json
 /data/rph-progress.json
+
+/data/group-registry.json
+/data/groups/

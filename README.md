@@ -140,3 +140,25 @@ uncaught errors trigger controlled shutdown so Render can restart a clean proces
 After pushing, Render deploys automatically only if auto-deploy for `main` is
 enabled. Otherwise use **Manual Deploy → Deploy latest commit**. Repository tests
 use fake Telegram/Codex processes and do not validate live Render secrets or login.
+
+## Owner chat in Telegram groups
+
+Set `ALLOWED_TELEGRAM_USER_ID` to the owner's numeric Telegram user ID. In any group or supergroup where the bot receives messages, the owner can mention `@Ashraf8765_bot <question>` or reply to a message sent by the bot. Replies are public in that same group. Set `TELEGRAM_BOT_USERNAME` if the bot has a different username. Group access uses the owner's Telegram identity; never send the private-chat password in a group. Missing owner configuration disables group activation.
+
+Other members' mentions, replies, commands, and questions are stored only as group data and receive no response. Ordinary owner messages also do not invoke Codex. Anonymous administrator messages cannot activate the assistant.
+
+Each group has separate persistent storage under `ASHRAF_AI_DATA_DIR/groups/`: the last 60 received messages and eight owner/assistant conversation turns, with each stored text capped at 2,500 characters. Summaries cover only this retained history. Public prompts never load private memory, profiles, projects, attachments, or private conversation history. Requests for private information are redirected to private chat. Other groups are never loaded; for a cross-group question, supply the information that is safe to share in the current group.
+
+Public Codex jobs use a temporary empty working directory, read-only sandbox, disabled shell/browser/image/connector/subagent tools, disabled memories and project instructions. These controls follow the [Codex configuration reference](https://developers.openai.com/codex/config-reference). Private assistant jobs retain their existing behavior.
+
+Telegram must deliver ordinary messages for group summaries to include them: configure the bot's group privacy settings accordingly. Only received messages can be stored; the bot cannot retrieve earlier Telegram group history.
+
+## Persistent group registry
+
+The registry is an atomic JSON file at `ASHRAF_AI_DATA_DIR/group-registry.json` (Render: `/var/data/memory/group-registry.json`). Entries are keyed by chat ID and record title, type, first/last observation, last message ID, observed message count and active status. Renames update the same entry. `my_chat_member` updates mark removals inactive and re-additions active; membership events and edits do not increment the message count. A stored update ID prevents replayed updates from inflating counts. Existing group message files remain unchanged.
+
+In the owner's password-authenticated private chat, `/groups` lists active observed groups directly without Codex. Natural questions about groups, activity, work or deadlines receive current registry data and relevant retained group messages. Message activity uses `last_message_at`; `last_seen_at` can also reflect membership updates. “Most active” means the highest total observed message count, not an activity rate. The registry starts collecting when this feature is deployed; it does not invent titles, counts or membership for historical files.
+
+Only `ALLOWED_TELEGRAM_USER_ID` can access the full registry. It must be configured on Render; when unset, private assistant processing fails closed. Public group `/groups` requests redirect the owner to private chat, and group AI receives only that group's registry entry. Non-owners remain silent in groups. Registry and message data are ignored by Git.
+
+The registry describes groups actually observed through Telegram updates, not all groups the bot might belong to. The existing poller now requests `message`, `edited_message` and `my_chat_member` updates using the [Telegram Bot API update mechanism](https://core.telegram.org/bots/api#update). No extra polling process or authentication method is introduced.
