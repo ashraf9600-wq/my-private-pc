@@ -11,9 +11,12 @@ import { loadEnvFile } from "./load-env.mjs";
 import { createAccessController, createAccessGate } from "./security/access.mjs";
 import { AttachmentStore } from "./files/store.mjs";
 import { downloadTelegramAttachment, getTelegramAttachment } from "./files/telegram.mjs";
-import { FileError } from "./files/types.mjs";
+import { FileError, inspectFilename } from "./files/types.mjs";
 import { SerialJobQueue, TelegramPoller } from "./telegram/runtime.mjs";
 import { createRuntimeStatus, dispatchMessageJob } from "./telegram/status.mjs";
+import { createDocumentMonitor } from "./files/monitor.mjs";
+import { DetectionStore } from "./files/detections.mjs";
+import { loadFileLimits, maxBytesForKind } from "./files/limits.mjs";
 
 async function main() {
   const projectRoot = path.resolve(path.join(path.dirname(fileURLToPath(import.meta.url)), ".."));
@@ -43,12 +46,15 @@ async function main() {
   await attachmentStore.initialize();
   const runtimeStatus = createRuntimeStatus();
   const groupRegistry = new GroupRegistry({ dataRoot });
+  const detectionStore = new DetectionStore({ dataRoot });
+  const fileLimits = loadFileLimits();
   const processMessage = createAssistant({
     groupRegistry,
     allowedUserId: process.env.ALLOWED_TELEGRAM_USER_ID,
     dataRoot,
     workdir: codexWorkdir,
     attachmentStore,
+    detectionStore,
     runTask: async (prompt, options) => {
       console.log("[codex] job started");
       try {
@@ -102,6 +108,21 @@ async function main() {
     }
   }
 
+  function fetchTelegramFile(filePath) {
+    if (!/^[a-zA-Z0-9_./-]+$/.test(filePath) || filePath.includes("..")) {
+      throw new FileError("download_path", "Bos, laluan fail Telegram ni tidak selamat.");
+    }
+    return fetch(`https://api.telegram.org/file/bot${token}/${filePath}`, {
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]),
+    });
+  }
+
+  const downloadAttachment = (descriptor, maxBytes) => downloadTelegramAttachment(descriptor, {
+    maxBytes,
+    getFile: (fileId) => telegram("getFile", { file_id: fileId }),
+    fetchFile: fetchTelegramFile,
+  });
+
   const processSecureMessage = createAccessGate({
     controller: accessController,
     processAuthenticated: async (text, { chatId, userId, message }) => {
@@ -115,18 +136,8 @@ async function main() {
         const descriptor = getTelegramAttachment(message);
         let request = text;
         if (descriptor) {
-          const downloaded = await downloadTelegramAttachment(descriptor, {
-            maxBytes: maxUploadBytes,
-            getFile: (fileId) => telegram("getFile", { file_id: fileId }),
-            fetchFile: (filePath) => {
-              if (!/^[a-zA-Z0-9_./-]+$/.test(filePath) || filePath.includes("..")) {
-                throw new FileError("download_path", "Bos, laluan fail Telegram ni tidak selamat.");
-              }
-              return fetch(`https://api.telegram.org/file/bot${token}/${filePath}`, {
-                signal: AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]),
-              });
-            },
-          });
+          const kind = inspectFilename(descriptor.filename).kind;
+          const downloaded = await downloadAttachment(descriptor, Math.min(maxUploadBytes, maxBytesForKind(kind, fileLimits)));
           await attachmentStore.prepare(chatId, downloaded, request);
           if (!request) {
             request = downloaded.kind === "image"
@@ -146,6 +157,20 @@ async function main() {
   const taskQueue = new SerialJobQueue({
     onError: () => console.error("[telegram] job failed"),
   });
+  const fileQueue = new SerialJobQueue({
+    onError: () => console.error("[group-file] failed"),
+  });
+  const monitorGroupFile = createDocumentMonitor({
+    dataRoot, ownerId: process.env.ALLOWED_TELEGRAM_USER_ID, limits: fileLimits, store: detectionStore,
+    download: downloadAttachment,
+    runVision: (prompt, options) => runtimeStatus.runJob(() =>
+      runCodexTask(prompt, { ...options, timeoutMs: codexTimeoutMs, signal: controller.signal })),
+    forwardOriginal: async (chatId, messageId) => {
+      try { await telegram("forwardMessage", { chat_id: process.env.ALLOWED_TELEGRAM_USER_ID, from_chat_id: chatId, message_id: messageId }); }
+      catch { await telegram("copyMessage", { chat_id: process.env.ALLOWED_TELEGRAM_USER_ID, from_chat_id: chatId, message_id: messageId }); }
+    },
+    sendPrivate: sendText,
+  });
 
   async function handleMessage(message) {
     const chatId = message.chat.id;
@@ -154,14 +179,16 @@ async function main() {
     console.log("[telegram] message received");
     if (controller.signal.aborted) return;
     if (isGroup(message)) {
+      const hasAttachment = Boolean(getTelegramAttachment(message));
       taskQueue.enqueue(async () => {
         try {
           const response = await processGroupMessage(message);
-          if (response !== null) await sendText(chatId, response);
+          if (!hasAttachment && response !== null) await sendText(chatId, response);
         } catch {
           console.error("[telegram] group task failed");
         }
       });
+      if (hasAttachment) fileQueue.enqueue(() => monitorGroupFile(message));
       return;
     }
     if (message.chat.type !== "private") return;
@@ -199,7 +226,10 @@ async function main() {
 
   const httpServer = await startHttpServer({ getTelegramState: () => poller.state });
   const lifecycle = installLifecycle({
-    poller, queue: taskQueue, controller,
+    poller, queue: {
+      stop() { taskQueue.stop(); fileQueue.stop(); },
+      async onIdle() { await Promise.all([taskQueue.onIdle(), fileQueue.onIdle()]); },
+    }, controller,
     closeResources: async () => {
       const results = await Promise.allSettled([
         new Promise((resolve) => {

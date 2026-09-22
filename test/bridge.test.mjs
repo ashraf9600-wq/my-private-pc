@@ -158,14 +158,20 @@ test("public group Codex uses an empty temporary directory and disables private 
   const dir = await mkdtemp(path.join(tmpdir(), "public-codex-test-"));
   const previousPath = process.env.PATH;
   t.after(async () => { process.env.PATH = previousPath; await rm(dir, { recursive: true, force: true }); });
-  await writeFile(path.join(dir, "codex"), `#!/usr/bin/env node
-const fs = require('node:fs');
-process.stdin.resume();
-process.stdin.on('end', () => process.stdout.write(JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), files: fs.readdirSync('.') })));
+  await writeFile(path.join(dir, "codex"), `#!/bin/sh
+printf 'cwd=%s\n' "$PWD"
+for argument do printf 'arg=%s\n' "$argument"; done
+for file in ./*; do [ -e "$file" ] && printf 'file=%s\n' "$file"; done
+cat >/dev/null
 `);
   await chmod(path.join(dir, "codex"), 0o755);
   process.env.PATH = `${dir}:${previousPath}`;
-  const result = JSON.parse(await runCodexTask("public question", { publicGroup: true, workdir: dir, images: ["private.png"] }));
+  const parse = (output) => ({
+    cwd: /^cwd=(.*)$/m.exec(output)?.[1],
+    args: [...output.matchAll(/^arg=(.*)$/gm)].map((match) => match[1]),
+    files: [...output.matchAll(/^file=(.*)$/gm)].map((match) => match[1]),
+  });
+  const result = parse(await runCodexTask("public question", { publicGroup: true, workdir: dir, images: ["private.png"] }));
   assert.notEqual(result.cwd, dir);
   assert.deepEqual(result.files, []);
   assert.equal(result.args[result.args.indexOf("--sandbox") + 1], "read-only");
@@ -174,6 +180,14 @@ process.stdin.on('end', () => process.stdout.write(JSON.stringify({ args: proces
   }
   assert.ok(result.args.includes("project_doc_max_bytes=0"));
   assert.ok(!result.args.includes("--image"));
+  const imagePath = path.join(dir, "actual.png");
+  await writeFile(imagePath, "image fixture");
+  const mediaResult = parse(await runCodexTask("inspect untrusted media", { safeMedia: true, workdir: dir, images: [imagePath] }));
+  assert.notEqual(mediaResult.cwd, dir);
+  assert.equal(mediaResult.args[mediaResult.args.indexOf("--sandbox") + 1], "read-only");
+  assert.equal(mediaResult.args[mediaResult.args.indexOf("--image") + 1], imagePath);
+  assert.equal(mediaResult.args[mediaResult.args.indexOf("shell_tool") - 1], "--disable");
   const { access } = await import("node:fs/promises");
   await assert.rejects(access(result.cwd), { code: "ENOENT" });
+  await assert.rejects(access(mediaResult.cwd), { code: "ENOENT" });
 });

@@ -9,6 +9,7 @@ import { JsonStore } from "./memory/store.mjs";
 import { rphInstructions } from "./rph/generator.mjs";
 import { detectRphIntent } from "./rph/intent.mjs";
 import { detectRphStateCommand, parseProgressMemory, savePlannedRph, setRphProgress, updateLatestRphState } from "./rph/progress.mjs";
+import { answerDetectionQuestion, isDetectionQuestion } from "./files/detections.mjs";
 
 export const HELP_TEXT = `🤖 ASHRAF AI
 
@@ -62,7 +63,7 @@ function parseTimetableMarker(response) {
   }
 }
 
-export function createAssistant({ dataRoot, runTask, workdir, attachmentStore, groupRegistry, allowedUserId, now = () => new Date() }) {
+export function createAssistant({ dataRoot, runTask, workdir, attachmentStore, groupRegistry, detectionStore, allowedUserId, now = () => new Date() }) {
   const store = new JsonStore(path.resolve(dataRoot));
 
   return async function processMessage(text, { chatId, userId, chatType }) {
@@ -73,6 +74,9 @@ export function createAssistant({ dataRoot, runTask, workdir, attachmentStore, g
     if (groupRegistry && !registryOwner) return DENIED_MESSAGE;
     if (isGroupsCommand(request)) {
       return registryOwner && groupRegistry ? groupRegistry.formatActiveGroups() : DENIED_MESSAGE;
+    }
+    if (isDetectionQuestion(request)) {
+      return registryOwner && detectionStore ? answerDetectionQuestion(detectionStore, request, now()) : DENIED_MESSAGE;
     }
     if (request === "/start" || request === "/help") return HELP_TEXT;
 

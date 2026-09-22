@@ -25,10 +25,10 @@ export function splitTelegramMessage(text, limit = TELEGRAM_MESSAGE_LIMIT) {
 }
 
 export async function runCodexTask(prompt, options) {
-  if (!options.publicGroup) return executeCodexTask(prompt, options);
+  if (!options.publicGroup && !options.safeMedia) return executeCodexTask(prompt, options);
   const workdir = await mkdtemp(path.join(tmpdir(), "ashraf-public-"));
   try {
-    return await executeCodexTask(prompt, { ...options, workdir, images: [] });
+    return await executeCodexTask(prompt, { ...options, workdir, images: options.publicGroup ? [] : options.images });
   } finally {
     await rm(workdir, { recursive: true, force: true });
   }
@@ -49,7 +49,7 @@ async function executeCodexTask(prompt, options) {
     "--model",
     "gpt-5.6-sol",
     "--sandbox",
-    options.publicGroup ? "read-only" : "workspace-write",
+    options.publicGroup || options.safeMedia ? "read-only" : "workspace-write",
     "--cd",
     workdir,
     "--color",
@@ -57,7 +57,7 @@ async function executeCodexTask(prompt, options) {
     "--config",
     'approval_policy="never"',
   ];
-  if (options.publicGroup) {
+  if (options.publicGroup || options.safeMedia) {
     for (const feature of ["shell_tool", "unified_exec", "apps", "plugins", "multi_agent", "multi_agent_v2", "memories", "browser_use", "computer_use", "view_image", "image_generation", "code_mode", "code_mode_host", "hooks", "skill_search"]) {
       args.push("--disable", feature);
     }

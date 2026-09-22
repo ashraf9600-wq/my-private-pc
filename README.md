@@ -40,11 +40,34 @@ persistent Render disk path if memory must survive redeploys. Memory contains no
 credentials. Recent conversation is bounded, and only memory relevant to the
 current request is included in a Codex prompt.
 
-Authenticated users can send JPG, JPEG, PNG, WEBP, PDF, DOCX, TXT, CSV, XLSX,
-and PPTX files. Files are validated, capped at 10 MB by default, processed as
+Authenticated private-chat users can send JPG, JPEG, PNG, WEBP, PDF, DOC, DOCX,
+ODT, RTF, TXT, MD, XLS, XLSX, CSV, ODS, PPT, PPTX and ODP files. Files are validated,
+size-limited, processed as
 untrusted data, and retained only temporarily in `/tmp/ashraf-ai` for follow-up
 questions. Set `MAX_UPLOAD_MB` to change the limit (maximum 50 MB). Scanned PDFs
 are rendered as page images when readable text is unavailable.
+
+Those formats plus ZIP are monitored silently in observed Telegram groups. Local text
+extraction is searched first; actual image inputs are sent to the installed Codex
+CLI only for images, scanned PDF pages and image-heavy presentations. A definite
+or possible owner-name match forwards/copies the original Telegram message to the
+configured owner and sends a private Malay summary. The bot never replies publicly
+to a group file. Detection metadata (not the large original) is stored in
+`document-detections.json` under `ASHRAF_AI_DATA_DIR`, keyed for deduplication by
+group chat ID and message ID.
+
+ZIP input is untrusted: traversal, nested archives, executable/script and
+macro-enabled entries, excessive file counts and excessive expanded size are
+rejected. Supported inner files are inspected without executing macros, formulas,
+scripts, links or embedded commands. Downloads, rendered pages and extracted ZIP
+content are deleted after each job. Group-file work uses its own serial queue so a
+failed or slow document does not stop polling or ordinary assistant jobs.
+
+Per-format defaults are `MAX_IMAGE_MB=10`, `MAX_PDF_MB=20`,
+`MAX_DOCUMENT_MB=15`, `MAX_SPREADSHEET_MB=15`,
+`MAX_PRESENTATION_MB=20`, and `MAX_ARCHIVE_MB=20`. Vision defaults are three PDF
+pages and three presentation visuals. ZIP defaults are 50 entries and 50 MB total
+expanded data. See `.env.example` for every optional setting.
 
 ## Start
 
