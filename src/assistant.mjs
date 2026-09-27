@@ -15,6 +15,11 @@ export const HELP_TEXT = `🤖 ASHRAF AI
 
 📚 RPH
 “Buat RPH minggu depan”
+/rphmingguan — jana dan hantar Excel sekarang
+
+📎 Fail RPH
+Hantar tapak .xlsx dengan kapsyen /tapakrph
+Hantar sumber RPT dengan kapsyen /sumberrph
 
 🗓 Jadual
 “Jadual saya esok”

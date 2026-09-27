@@ -1,4 +1,5 @@
 import path from "node:path";
+import { readFile, unlink } from "node:fs/promises";
 import { GroupRegistry, createRegistryUpdateHandler } from "./telegram/group-registry.mjs";
 import { createGroupHandler, isGroup } from "./telegram/groups.mjs";
 import { acquirePollingLock, installLifecycle } from "./lifecycle.mjs";
@@ -17,6 +18,7 @@ import { createRuntimeStatus, dispatchMessageJob } from "./telegram/status.mjs";
 import { createDocumentMonitor } from "./files/monitor.mjs";
 import { DetectionStore } from "./files/detections.mjs";
 import { loadFileLimits, maxBytesForKind } from "./files/limits.mjs";
+import { createWeeklyRphService, isWeeklyRphCommand, rphUploadKind, saveRphUpload } from "./rph/weekly.mjs";
 
 async function main() {
   const projectRoot = path.resolve(path.join(path.dirname(fileURLToPath(import.meta.url)), ".."));
@@ -108,6 +110,38 @@ async function main() {
     }
   }
 
+  async function sendDocument(chatId, filePath, filename, caption = "") {
+    const form = new FormData();
+    form.set("chat_id", String(chatId));
+    form.set("caption", caption);
+    form.set("document", new Blob([await readFile(filePath)], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }), filename);
+    const response = await fetch(`${telegramUrl}/sendDocument`, {
+      method: "POST",
+      body: form,
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]),
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error("Telegram document upload failed.");
+    return result.result;
+  }
+
+  const weeklyRph = createWeeklyRphService({
+    dataRoot,
+    workdir: codexWorkdir,
+    ownerId: process.env.ALLOWED_TELEGRAM_USER_ID,
+    scheduleHour: Number(process.env.RPH_WEEKLY_HOUR || 18),
+    scheduleMinute: Number(process.env.RPH_WEEKLY_MINUTE || 0),
+    runTask: (prompt, options) => runtimeStatus.runJob(() =>
+      runCodexTask(prompt, {
+        ...options,
+        timeoutMs: codexTimeoutMs,
+        signal: controller.signal,
+      })),
+    sendDocument,
+  });
+
   function fetchTelegramFile(filePath) {
     if (!/^[a-zA-Z0-9_./-]+$/.test(filePath) || filePath.includes("..")) {
       throw new FileError("download_path", "Bos, laluan fail Telegram ni tidak selamat.");
@@ -194,6 +228,35 @@ async function main() {
     if (message.chat.type !== "private") return;
     return dispatchMessageJob(text, async () => {
       try {
+        const owner = process.env.ALLOWED_TELEGRAM_USER_ID
+          && String(userId) === String(process.env.ALLOWED_TELEGRAM_USER_ID);
+        const uploadKind = rphUploadKind(text);
+        if (owner && uploadKind) {
+          const descriptor = getTelegramAttachment(message);
+          if (!descriptor) {
+            await sendText(chatId, uploadKind === "template"
+              ? "Bos, lampirkan fail .xlsx bersama arahan /tapakrph."
+              : "Bos, lampirkan fail RPT bersama arahan /sumberrph.");
+            return;
+          }
+          const kind = inspectFilename(descriptor.filename).kind;
+          const downloaded = await downloadAttachment(
+            descriptor,
+            Math.min(maxUploadBytes, maxBytesForKind(kind, fileLimits)),
+          );
+          try { await saveRphUpload(downloaded, dataRoot, uploadKind); }
+          finally { await unlink(downloaded.localPath).catch(() => {}); }
+          await sendText(chatId, uploadKind === "template"
+            ? "Baik bos, tapak Excel RPH sudah disimpan."
+            : `Baik bos, sumber RPH ${descriptor.filename} sudah disimpan.`);
+          return;
+        }
+        if (owner && isWeeklyRphCommand(text)) {
+          await sendText(chatId, "Baik bos, saya sedang menjana RPH minggu hadapan.");
+          const result = await weeklyRph.run({ chatId, force: true });
+          await sendText(chatId, `Siap bos. ${result.lessons} RPH sudah dimasukkan ke dalam fail Excel.`);
+          return;
+        }
         const response = await processSecureMessage(
           { userId, chatId, text, message },
           {
@@ -227,7 +290,7 @@ async function main() {
   const httpServer = await startHttpServer({ getTelegramState: () => poller.state, getRuntimeSnapshot: () => runtimeStatus.snapshot() });
   const lifecycle = installLifecycle({
     poller, queue: {
-      stop() { taskQueue.stop(); fileQueue.stop(); },
+      stop() { weeklyRph.stop(); taskQueue.stop(); fileQueue.stop(); },
       async onIdle() { await Promise.all([taskQueue.onIdle(), fileQueue.onIdle()]); },
     }, controller,
     closeResources: async () => {
@@ -249,6 +312,7 @@ async function main() {
     void lifecycle.shutdown();
   });
   console.log("ASHRAF AI started (model: gpt-5.6-sol)");
+  weeklyRph.start();
   void poller.start().catch(() => {
     console.error("[telegram] unexpected polling failure");
     process.exitCode = 1;
