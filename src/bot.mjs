@@ -19,6 +19,7 @@ import { createDocumentMonitor } from "./files/monitor.mjs";
 import { DetectionStore } from "./files/detections.mjs";
 import { loadFileLimits, maxBytesForKind } from "./files/limits.mjs";
 import { createWeeklyRphService, isWeeklyRphCommand, rphUploadKind, saveRphUpload } from "./rph/weekly.mjs";
+import { createDriveSourceService, parseRphDriveCommand } from "./rph/drive.mjs";
 
 async function main() {
   const projectRoot = path.resolve(path.join(path.dirname(fileURLToPath(import.meta.url)), ".."));
@@ -127,6 +128,11 @@ async function main() {
     return result.result;
   }
 
+  const driveSources = createDriveSourceService({
+    dataRoot,
+    logger: console,
+  });
+
   const weeklyRph = createWeeklyRphService({
     dataRoot,
     workdir: codexWorkdir,
@@ -140,6 +146,10 @@ async function main() {
         signal: controller.signal,
       })),
     sendDocument,
+    syncSources: async () => {
+      const status = await driveSources.status();
+      return status.configured ? driveSources.sync() : null;
+    },
   });
 
   function fetchTelegramFile(filePath) {
@@ -230,6 +240,31 @@ async function main() {
       try {
         const owner = process.env.ALLOWED_TELEGRAM_USER_ID
           && String(userId) === String(process.env.ALLOWED_TELEGRAM_USER_ID);
+        const driveCommand = parseRphDriveCommand(text);
+        if (owner && driveCommand) {
+          if (driveCommand.action === "configure") {
+            if (!driveCommand.folderId) {
+              await sendText(chatId, "Bos, hantar arahan /rphdrive diikuti pautan folder Google Drive.");
+              return;
+            }
+            await driveSources.configure(driveCommand.folderId);
+            await sendText(chatId, "Baik bos, folder Google Drive sudah ditetapkan. Saya sedang menyelaraskan sumber RPH.");
+            const result = await driveSources.sync();
+            await sendText(chatId, `Siap bos. ${result.files} fail sumber Drive sudah diselaraskan.`);
+            return;
+          }
+          if (driveCommand.action === "sync") {
+            await sendText(chatId, "Baik bos, saya sedang mengambil versi terkini daripada Google Drive.");
+            const result = await driveSources.sync();
+            await sendText(chatId, `Siap bos. ${result.files} fail sumber Drive sudah diselaraskan.`);
+            return;
+          }
+          const status = await driveSources.status();
+          await sendText(chatId, status.configured
+            ? `Google Drive ditetapkan. ${status.files} fail. Penyelarasan terakhir: ${status.syncedAt || "belum pernah"}.`
+            : "Folder Google Drive belum ditetapkan. Gunakan /rphdrive diikuti pautan folder.");
+          return;
+        }
         const uploadKind = rphUploadKind(text);
         if (owner && uploadKind) {
           const descriptor = getTelegramAttachment(message);
@@ -272,6 +307,8 @@ async function main() {
         console.error("[telegram] task failed");
         const messageText = error instanceof FileError
           ? error.message
+          : String(error?.code || "").startsWith("RPH_DRIVE")
+            ? error.message
           : error?.code === "CODEX_TIMEOUT"
             ? "Bos, permintaan tadi mengambil terlalu lama. Cuba sekali lagi dengan arahan lebih ringkas."
             : "Bos, ASHRAF AI ada masalah memproses mesej tadi. Cuba sekali lagi.";

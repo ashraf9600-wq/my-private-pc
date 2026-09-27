@@ -88,17 +88,25 @@ export async function saveRphUpload(downloaded, dataRoot, kind) {
   return destination;
 }
 
+async function collectSources(dir, files) {
+  let entries;
+  try { entries = await readdir(dir, { withFileTypes: true }); }
+  catch (error) {
+    if (error.code === "ENOENT") return;
+    throw error;
+  }
+  for (const entry of entries) {
+    const location = path.join(dir, entry.name);
+    if (entry.isDirectory()) await collectSources(location, files);
+    else if (entry.isFile() && SOURCE_EXTENSIONS.has(path.extname(entry.name).toLocaleLowerCase("en-US"))) files.push(location);
+  }
+}
+
 async function listSources(dataRoot, workdir) {
-  const locations = [path.join(dataRoot, "rph-sources"), path.join(workdir, "rph-sources")];
+  const locations = [path.join(dataRoot, "rph-sources"), path.join(dataRoot, "rph-drive-sources"), path.join(workdir, "rph-sources")];
   const files = [];
   for (const dir of locations) {
-    try {
-      for (const name of await readdir(dir)) {
-        if (SOURCE_EXTENSIONS.has(path.extname(name).toLocaleLowerCase("en-US"))) files.push(path.join(dir, name));
-      }
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-    }
+    await collectSources(dir, files);
   }
   return [...new Set(files)];
 }
@@ -230,7 +238,7 @@ function weeklyPrompt({ timetable, teacher, progress, sources, range }) {
   return `Jana RPH untuk minggu ${range.start} hingga ${range.end}. Baca dan ikut semua sumber RPT yang disenaraikan. Jangan ulang Standard Pembelajaran yang sudah direkodkan. Objektif mesti boleh diukur dan menyatakan bilangan atau peratus murid. Untuk Pendidikan Jasmani Tahun 4, abaikan semua kandungan renang/akuatik dan teruskan topik bukan akuatik seterusnya. Hasilkan tepat satu RPH bagi setiap slot jadual Isnin hingga Jumaat. Pulangkan JSON sahaja dalam bentuk {"lessons":[{"date":"YYYY-MM-DD","day":"Isnin","time":"HH:MM","class":"...","subject":"...","sk":"nombor dan teks","sp":"nombor dan teks","title":"...","objectives":["..."],"activities":["..."],"reflection":"___ / ___ murid mencapai objektif."}]}. Jangan reka nombor SK/SP jika sumber tiada; gunakan teks "PERLU SEMAK SUMBER".\n\nJADUAL:\n${JSON.stringify(timetable)}\n\nGURU:\n${JSON.stringify(teacher)}\n\nKEMAJUAN:\n${JSON.stringify(progress)}\n\nFAIL SUMBER (baca dari cakera):\n${sources.join("\n") || "Tiada fail sumber ditemui."}`;
 }
 
-export function createWeeklyRphService({ dataRoot, workdir, ownerId, runTask, sendDocument, now = () => new Date(), logger = console, scheduleHour = 18, scheduleMinute = 0 }) {
+export function createWeeklyRphService({ dataRoot, workdir, ownerId, runTask, sendDocument, syncSources = async () => null, now = () => new Date(), logger = console, scheduleHour = 18, scheduleMinute = 0 }) {
   const store = new JsonStore(path.resolve(dataRoot));
   let timer = null;
   let running = null;
@@ -241,6 +249,7 @@ export function createWeeklyRphService({ dataRoot, workdir, ownerId, runTask, se
       const range = nextWeekRange(now());
       const state = await store.read("weekly-rph-state.json", {});
       if (!force && state.last_week_start === range.start) return { skipped: true, range };
+      await syncSources();
       const [timetable, teacher, progress, sources] = await Promise.all([
         store.read("timetable.json", { entries: [] }), store.read("teacher.json", {}),
         store.read("rph-progress.json", { records: {} }), listSources(dataRoot, workdir),

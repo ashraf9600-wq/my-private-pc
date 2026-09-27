@@ -21,6 +21,11 @@ export const HELP_TEXT = `🤖 ASHRAF AI
 Hantar tapak .xlsx dengan kapsyen /tapakrph
 Hantar sumber RPT dengan kapsyen /sumberrph
 
+☁️ Google Drive
+/rphdrive <pautan folder> — tetapkan folder sumber
+/rphdrivesync — ambil versi terkini
+/rphdrivestatus — semak sambungan
+
 🗓 Jadual
 “Jadual saya esok”
 
