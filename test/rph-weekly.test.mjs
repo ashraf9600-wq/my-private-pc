@@ -31,16 +31,21 @@ test("service builds an xlsx, sends it once, and records the week", async (t) =>
     entries: [{ day: "Isnin", time: "08:00", class: "1 UKM", subject: "Sains" }],
   }));
   let sent = null;
+  let taskOptions = null;
   const service = createWeeklyRphService({
     dataRoot: root,
     workdir: root,
     ownerId: "123",
     now: () => new Date("2026-09-25T09:00:00Z"),
-    runTask: async () => JSON.stringify({ lessons: [{
+    taskTimeoutMs: 900_000,
+    runTask: async (_prompt, options) => {
+      taskOptions = options;
+      return JSON.stringify({ lessons: [{
       date: "2026-09-28", day: "Isnin", time: "08:00", class: "1 UKM", subject: "Sains",
       sk: "1.1", sp: "1.1.1", title: "Deria", objectives: ["18 daripada 20 murid menyatakan 5 deria"],
       activities: ["Murid mengenal pasti deria"], reflection: "___ / 20 murid mencapai objektif.",
-    }] }),
+    }] });
+    },
     sendDocument: async (chatId, filePath, filename, caption) => {
       const bytes = await readFile(filePath);
       sent = { chatId, filename, caption, signature: bytes.subarray(0, 2).toString() };
@@ -49,6 +54,7 @@ test("service builds an xlsx, sends it once, and records the week", async (t) =>
   });
   const result = await service.run();
   assert.equal(result.lessons, 1);
+  assert.equal(taskOptions.timeoutMs, 900_000);
   assert.deepEqual(sent, {
     chatId: "123",
     filename: "RPH-2026-09-28-hingga-2026-10-02.xlsx",

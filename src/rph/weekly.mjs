@@ -238,7 +238,7 @@ function weeklyPrompt({ timetable, teacher, progress, sources, range }) {
   return `Jana RPH untuk minggu ${range.start} hingga ${range.end}. Baca dan ikut semua sumber RPT yang disenaraikan. Jangan ulang Standard Pembelajaran yang sudah direkodkan. Objektif mesti boleh diukur dan menyatakan bilangan atau peratus murid. Untuk Pendidikan Jasmani Tahun 4, abaikan semua kandungan renang/akuatik dan teruskan topik bukan akuatik seterusnya. Hasilkan tepat satu RPH bagi setiap slot jadual Isnin hingga Jumaat. Pulangkan JSON sahaja dalam bentuk {"lessons":[{"date":"YYYY-MM-DD","day":"Isnin","time":"HH:MM","class":"...","subject":"...","sk":"nombor dan teks","sp":"nombor dan teks","title":"...","objectives":["..."],"activities":["..."],"reflection":"___ / ___ murid mencapai objektif."}]}. Jangan reka nombor SK/SP jika sumber tiada; gunakan teks "PERLU SEMAK SUMBER".\n\nJADUAL:\n${JSON.stringify(timetable)}\n\nGURU:\n${JSON.stringify(teacher)}\n\nKEMAJUAN:\n${JSON.stringify(progress)}\n\nFAIL SUMBER (baca dari cakera):\n${sources.join("\n") || "Tiada fail sumber ditemui."}`;
 }
 
-export function createWeeklyRphService({ dataRoot, workdir, ownerId, runTask, sendDocument, syncSources = async () => null, now = () => new Date(), logger = console, scheduleHour = 18, scheduleMinute = 0 }) {
+export function createWeeklyRphService({ dataRoot, workdir, ownerId, runTask, sendDocument, syncSources = async () => null, now = () => new Date(), logger = console, scheduleHour = 18, scheduleMinute = 0, taskTimeoutMs = 900_000 }) {
   const store = new JsonStore(path.resolve(dataRoot));
   let timer = null;
   let running = null;
@@ -255,7 +255,10 @@ export function createWeeklyRphService({ dataRoot, workdir, ownerId, runTask, se
         store.read("rph-progress.json", { records: {} }), listSources(dataRoot, workdir),
       ]);
       if (!Array.isArray(timetable.entries) || !timetable.entries.length) throw new Error("Jadual waktu belum disimpan.");
-      const response = await runTask(weeklyPrompt({ timetable, teacher, progress, sources, range }), { workdir });
+      const response = await runTask(weeklyPrompt({ timetable, teacher, progress, sources, range }), {
+        workdir,
+        timeoutMs: taskTimeoutMs,
+      });
       const lessons = parseLessons(response);
       if (lessons.length !== timetable.entries.length) throw new Error("Bilangan RPH tidak sepadan dengan jadual waktu.");
       const outputDir = path.join(tmpdir(), "ashraf-ai-rph");

@@ -139,10 +139,11 @@ async function main() {
     ownerId: process.env.ALLOWED_TELEGRAM_USER_ID,
     scheduleHour: Number(process.env.RPH_WEEKLY_HOUR || 18),
     scheduleMinute: Number(process.env.RPH_WEEKLY_MINUTE || 0),
+    taskTimeoutMs: Number(process.env.RPH_WEEKLY_TIMEOUT_MS || 900_000),
     runTask: (prompt, options) => runtimeStatus.runJob(() =>
       runCodexTask(prompt, {
         ...options,
-        timeoutMs: codexTimeoutMs,
+        timeoutMs: options.timeoutMs ?? codexTimeoutMs,
         signal: controller.signal,
       })),
     sendDocument,
@@ -287,9 +288,16 @@ async function main() {
           return;
         }
         if (owner && isWeeklyRphCommand(text)) {
-          await sendText(chatId, "Baik bos, saya sedang menjana RPH minggu hadapan.");
-          const result = await weeklyRph.run({ chatId, force: true });
-          await sendText(chatId, `Siap bos. ${result.lessons} RPH sudah dimasukkan ke dalam fail Excel.`);
+          await sendText(chatId, "Baik bos, saya sedang menjana RPH minggu hadapan di latar belakang. Bos masih boleh guna arahan lain sementara menunggu.");
+          void weeklyRph.run({ chatId, force: true }).then(async (result) => {
+            await sendText(chatId, `Siap bos. ${result.lessons} RPH sudah dimasukkan ke dalam fail Excel.`);
+          }).catch(async (error) => {
+            console.error("[rph-weekly] generation failed", error?.code || error?.name || "unknown");
+            const messageText = error?.code === "CODEX_TIMEOUT"
+              ? "Bos, penjanaan RPH masih melebihi had 15 minit. Cuba /rphmingguan semula atau semak sumber RPH."
+              : "Bos, penjanaan RPH gagal. Saya sudah merekodkan puncanya untuk semakan.";
+            await sendText(chatId, messageText).catch(() => {});
+          });
           return;
         }
         const response = await processSecureMessage(
