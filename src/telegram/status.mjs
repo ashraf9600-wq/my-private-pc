@@ -28,8 +28,6 @@ export function isHealthCommand(text) {
   return /^\/(?:ping|status)(?:@\w+)?$/i.test(text.trim());
 }
 
-// Authentication still happens inside job through the existing access gate.
-// Only these read-only commands bypass the serial assistant queue.
 export function dispatchMessageJob(text, job, queue) {
   return isHealthCommand(text) ? job() : queue.enqueue(job);
 }
@@ -47,6 +45,9 @@ export function createRuntimeStatus({ now = () => new Date(), uptime = () => pro
       } finally {
         activeJobs--;
       }
+    },
+    snapshot() {
+      return { activeJobs, lastSuccess: lastSuccess?.toISOString() || null };
     },
     reply(text) {
       if (!isHealthCommand(text)) return null;

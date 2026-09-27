@@ -224,7 +224,7 @@ async function main() {
     onUpdate: createRegistryUpdateHandler({ registry: groupRegistry, onMessage: handleMessage }),
   });
 
-  const httpServer = await startHttpServer({ getTelegramState: () => poller.state });
+  const httpServer = await startHttpServer({ getTelegramState: () => poller.state, getRuntimeSnapshot: () => runtimeStatus.snapshot() });
   const lifecycle = installLifecycle({
     poller, queue: {
       stop() { taskQueue.stop(); fileQueue.stop(); },

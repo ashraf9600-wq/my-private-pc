@@ -8,14 +8,28 @@ async function closeServer(server) {
   });
 }
 
-test("serves Render health endpoints", async () => {
-  const server = await startHttpServer({ port: 0, host: "127.0.0.1", logger: () => {} });
+test("serves dashboard, API and Render health endpoints", async () => {
+  const server = await startHttpServer({
+    port: 0,
+    host: "127.0.0.1",
+    logger: () => {},
+    getRuntimeSnapshot: () => ({ activeJobs: 1, lastSuccess: null }),
+  });
   const { port } = server.address();
 
   try {
     const root = await fetch(`http://127.0.0.1:${port}/`);
     assert.equal(root.status, 200);
-    assert.equal(await root.text(), "Telegram Codex Bot is running");
+    assert.match(root.headers.get("content-type"), /^text\/html/);
+    assert.match(await root.text(), /ASHRAF AI Control Center/);
+
+    const status = await fetch(`http://127.0.0.1:${port}/api/status`);
+    assert.equal(status.status, 200);
+    const snapshot = await status.json();
+    assert.equal(snapshot.service, "ashraf-ai-assistant");
+    assert.equal(snapshot.runtime.activeJobs, 1);
+    assert.equal(snapshot.agents.length, 4);
+    assert.equal(typeof snapshot.system.memory.percent, "number");
 
     const health = await fetch(`http://127.0.0.1:${port}/healthz`);
     assert.equal(health.status, 200);
@@ -24,7 +38,6 @@ test("serves Render health endpoints", async () => {
     await closeServer(server);
   }
 });
-
 
 test("health exposes conflict without triggering Render restart storms", async () => {
   const server = await startHttpServer({ port: 0, getTelegramState: () => "conflict", logger() {} });
