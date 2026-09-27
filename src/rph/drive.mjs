@@ -170,14 +170,14 @@ export function createDriveSourceService({
     const download = sourceDownload(file);
     if (!download) return 0;
     const declared = Number(file.size || 0);
-    if (declared && declared > maxBytes) throw new Error(`Fail Drive terlalu besar: ${file.name}`);
+    if (declared && declared > maxBytes) return null;
     const response = await fetchImpl(download.url, {
       headers: { authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(120_000),
     });
     if (!response.ok) throw new Error(`Gagal memuat turun sumber Drive: ${file.name}`);
     const bytes = Buffer.from(await response.arrayBuffer());
-    if (bytes.length > maxBytes) throw new Error(`Fail Drive terlalu besar: ${file.name}`);
+    if (bytes.length > maxBytes) return null;
     const stem = safePart(path.basename(file.name || "source", path.extname(file.name || "")));
     const filename = `${stem}__${file.id.slice(0, 8)}${download.extension}`;
     await writeFile(path.join(destination, filename), bytes, { mode: 0o600 });
@@ -196,9 +196,11 @@ export function createDriveSourceService({
       const token = await tokenProvider();
       const maxFiles = Math.max(1, Number(env.RPH_DRIVE_MAX_FILES || 1_000));
       const maxBytes = Math.max(1, Number(env.RPH_DRIVE_MAX_MB || 256)) * 1024 * 1024;
+      const maxFileBytes = Math.max(1, Number(env.RPH_DRIVE_MAX_FILE_MB || 64)) * 1024 * 1024;
       const staging = path.join(root, `.rph-drive-${Date.now()}`);
       const manifest = [];
       let downloadedBytes = 0;
+      let skipped = 0;
       await mkdir(staging, { recursive: true, mode: 0o700 });
       try {
         const queue = [{ id: config.folder_id, relative: "" }];
@@ -215,8 +217,11 @@ export function createDriveSourceService({
             if (manifest.length >= maxFiles) throw new Error(`Had ${maxFiles} fail sumber Drive telah dicapai.`);
             const destination = path.join(staging, folder.relative);
             await mkdir(destination, { recursive: true, mode: 0o700 });
-            downloadedBytes += await downloadFile(file, destination, token, maxBytes - downloadedBytes);
-            if (downloadedBytes > maxBytes) throw new Error("Had storan sumber Google Drive telah dicapai.");
+            const remainingBytes = maxBytes - downloadedBytes;
+            if (remainingBytes <= 0) { skipped += 1; continue; }
+            const fileBytes = await downloadFile(file, destination, token, Math.min(maxFileBytes, remainingBytes));
+            if (fileBytes === null) { skipped += 1; continue; }
+            downloadedBytes += fileBytes;
             manifest.push({ id: file.id, name: file.name, folder: folder.relative, mime_type: file.mimeType, modified_time: file.modifiedTime });
           }
         }
@@ -230,6 +235,7 @@ export function createDriveSourceService({
           synced_at: new Date().toISOString(),
           files: manifest.length,
           bytes: downloadedBytes,
+          skipped,
           manifest,
         };
         await store.write("rph-drive-manifest.json", result);
