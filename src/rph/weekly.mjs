@@ -116,14 +116,20 @@ function parseLessons(raw) {
   const candidate = fenced || raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1);
   const parsed = JSON.parse(candidate);
   if (!Array.isArray(parsed.lessons) || !parsed.lessons.length) throw new Error("Penjana tidak memulangkan senarai RPH.");
-  return parsed.lessons.map((lesson) => ({
-    date: String(lesson.date || ""), day: String(lesson.day || ""), time: String(lesson.time || ""),
-    class: String(lesson.class || ""), subject: String(lesson.subject || ""), sk: String(lesson.sk || ""),
-    sp: String(lesson.sp || ""), title: String(lesson.title || ""),
-    objectives: Array.isArray(lesson.objectives) ? lesson.objectives.join("\n") : String(lesson.objectives || ""),
-    activities: Array.isArray(lesson.activities) ? lesson.activities.join("\n") : String(lesson.activities || ""),
-    reflection: String(lesson.reflection || "___ / ___ murid mencapai objektif."),
-  }));
+  return parsed.lessons.map((lesson, index) => {
+    const activities = Array.isArray(lesson.activities)
+      ? lesson.activities.map((activity) => String(activity).trim()).filter(Boolean)
+      : [];
+    if (activities.length !== 6) throw new Error(`RPH ke-${index + 1} mesti mempunyai tepat 6 aktiviti.`);
+    return {
+      date: String(lesson.date || ""), day: String(lesson.day || ""), time: String(lesson.time || ""),
+      class: String(lesson.class || ""), subject: String(lesson.subject || ""), sk: String(lesson.sk || ""),
+      sp: String(lesson.sp || ""), title: String(lesson.title || ""),
+      objectives: Array.isArray(lesson.objectives) ? lesson.objectives.join("\n") : String(lesson.objectives || ""),
+      activities: activities.map((activity, activityIndex) => `${activityIndex + 1}. ${activity}`).join("\n"),
+      reflection: String(lesson.reflection || "___ / ___ murid mencapai objektif."),
+    };
+  });
 }
 
 function columnNumber(name) {
@@ -235,7 +241,7 @@ async function createWorkbook(lessons, templatePath, destination) {
 }
 
 function weeklyPrompt({ timetable, teacher, progress, sources, range }) {
-  return `Jana RPH untuk minggu ${range.start} hingga ${range.end}. Baca dan ikut semua sumber RPT yang disenaraikan. Jangan ulang Standard Pembelajaran yang sudah direkodkan. Objektif mesti boleh diukur dan menyatakan bilangan atau peratus murid. Untuk Pendidikan Jasmani Tahun 4, abaikan semua kandungan renang/akuatik dan teruskan topik bukan akuatik seterusnya. Hasilkan tepat satu RPH bagi setiap slot jadual Isnin hingga Jumaat. Pulangkan JSON sahaja dalam bentuk {"lessons":[{"date":"YYYY-MM-DD","day":"Isnin","time":"HH:MM","class":"...","subject":"...","sk":"nombor dan teks","sp":"nombor dan teks","title":"...","objectives":["..."],"activities":["..."],"reflection":"___ / ___ murid mencapai objektif."}]}. Jangan reka nombor SK/SP jika sumber tiada; gunakan teks "PERLU SEMAK SUMBER".\n\nJADUAL:\n${JSON.stringify(timetable)}\n\nGURU:\n${JSON.stringify(teacher)}\n\nKEMAJUAN:\n${JSON.stringify(progress)}\n\nFAIL SUMBER (baca dari cakera):\n${sources.join("\n") || "Tiada fail sumber ditemui."}`;
+  return `Jana RPH untuk minggu ${range.start} hingga ${range.end}. Baca dan ikut semua sumber RPT yang disenaraikan. Jangan ulang Standard Pembelajaran yang sudah direkodkan. Objektif mesti boleh diukur dan menyatakan bilangan atau peratus murid. Untuk Pendidikan Jasmani Tahun 4, abaikan semua kandungan renang/akuatik dan teruskan topik bukan akuatik seterusnya. Hasilkan tepat satu RPH bagi setiap slot jadual Isnin hingga Jumaat. Setiap RPH mesti mempunyai tepat 6 aktiviti PdP yang berbeza dan tersusun mengikut urutan pengajaran. Setiap item dalam medan activities mesti mengandungi satu aktiviti lengkap; jangan gabungkan dua aktiviti dalam satu item. Pulangkan JSON sahaja dalam bentuk {"lessons":[{"date":"YYYY-MM-DD","day":"Isnin","time":"HH:MM","class":"...","subject":"...","sk":"nombor dan teks","sp":"nombor dan teks","title":"...","objectives":["..."],"activities":["Aktiviti 1","Aktiviti 2","Aktiviti 3","Aktiviti 4","Aktiviti 5","Aktiviti 6"],"reflection":"___ / ___ murid mencapai objektif."}]}. Jangan reka nombor SK/SP jika sumber tiada; gunakan teks "PERLU SEMAK SUMBER".\n\nJADUAL:\n${JSON.stringify(timetable)}\n\nGURU:\n${JSON.stringify(teacher)}\n\nKEMAJUAN:\n${JSON.stringify(progress)}\n\nFAIL SUMBER (baca dari cakera):\n${sources.join("\n") || "Tiada fail sumber ditemui."}`;
 }
 
 export function createWeeklyRphService({ dataRoot, workdir, ownerId, runTask, sendDocument, syncSources = async () => null, now = () => new Date(), logger = console, scheduleHour = 18, scheduleMinute = 0, taskTimeoutMs = 900_000 }) {

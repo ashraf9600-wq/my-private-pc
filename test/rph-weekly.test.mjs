@@ -43,7 +43,7 @@ test("service builds an xlsx, sends it once, and records the week", async (t) =>
       return JSON.stringify({ lessons: [{
       date: "2026-09-28", day: "Isnin", time: "08:00", class: "1 UKM", subject: "Sains",
       sk: "1.1", sp: "1.1.1", title: "Deria", objectives: ["18 daripada 20 murid menyatakan 5 deria"],
-      activities: ["Murid mengenal pasti deria"], reflection: "___ / 20 murid mencapai objektif.",
+      activities: ["Murid mengenal pasti deria", "Murid memadankan deria dengan organ", "Murid berbincang dalam kumpulan", "Murid menjalankan aktiviti stesen", "Murid menjawab soalan pentaksiran", "Murid merumuskan pembelajaran"], reflection: "___ / 20 murid mencapai objektif.",
     }] });
     },
     sendDocument: async (chatId, filePath, filename, caption) => {
